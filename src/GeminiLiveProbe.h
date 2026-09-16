@@ -14,8 +14,19 @@ class MemoryStore;
 // Wi-Fi/API key/system prompt from SD/NVS, with redacted serial logs.
 class GeminiLiveProbe {
  public:
-  static constexpr int AUDIO_RING_BUFFERS = 8;
-  static constexpr size_t AUDIO_BUFFER_BYTES = 100 * 1024;
+  // Capacity that matters here is chunks, not bytes. Gemini delivers a long
+  // answer faster than realtime while the speaker drains at exactly realtime,
+  // so the backlog grows for the whole answer and a ring that cannot hold all
+  // of it drops audio mid-sentence. Enlarging byte-wise did not help: sixteen
+  // 100 KB buffers still overflowed at 42 chunks, having overflowed at 23 with
+  // eight. Chunks measure ~8-20 KB, so 100 KB per buffer wasted most of the
+  // ring. The same ~2 MB re-cut as 64 x 32 KB holds a complete long answer.
+  // Chunks were assumed to be ~19 KB from the prebuffer timings; the guard in
+  // decodeBase64 caught one at 36.5 KB (760 ms), so 32 KB was too small and a
+  // chunk was rejected mid-answer. 64 KB is about twice the largest measured.
+  // Buffer count is set from peakPending logging rather than another estimate.
+  static constexpr int AUDIO_RING_BUFFERS = 40;
+  static constexpr size_t AUDIO_BUFFER_BYTES = 64 * 1024;
 
   // Live API model shipped as the default. Runtime configs written by older
   // firmware still name the retired preview model, so loaders upgrade that
@@ -100,6 +111,10 @@ class GeminiLiveProbe {
   // How long to keep a turn open after the last IN_PROGRESS interaction
   // status before giving up and completing it anyway.
   static constexpr uint32_t INTERACTION_STATUS_WATCHDOG_MS = 20000;
+  // Upper bound on playing out a turn's tail. Only a stuck speaker should ever
+  // reach it: a backlog drains at realtime, so this must exceed the longest
+  // answer the ring can hold, not the few seconds a blocking drain could spare.
+  static constexpr uint32_t TURN_DRAIN_TIMEOUT_MS = 45000;
   // Report arrival gaps big enough to matter against the speaker buffer depth.
   static constexpr uint32_t AUDIO_ARRIVAL_REPORT_MS = 150;
   // Playback used to start on the first chunk with nothing behind it, so any
@@ -107,6 +122,8 @@ class GeminiLiveProbe {
   // the first chunk is queued; after that the stream over-delivers and keeps
   // itself ahead. Kept below the ring capacity so decoding never overtakes it.
   static constexpr uint32_t AUDIO_PREBUFFER_MS = 400;
+  // Reserve three: up to two handed to the speaker whose DMA still reads them,
+  // plus the one currently being decoded. Overwriting either is an audible tear.
   static constexpr int AUDIO_PENDING_MAX = AUDIO_RING_BUFFERS - 3;
 
   WebSocketsClient ws_;
@@ -149,7 +166,13 @@ class GeminiLiveProbe {
   int pending_len_[AUDIO_RING_BUFFERS] = {0};
   int pending_head_ = 0;
   int pending_count_ = 0;
+  // Peak backlog per turn: the number that actually sizes the ring.
+  int pending_peak_ = 0;
   bool prebuffering_ = false;
+  // A turn whose audio is still playing out. The teardown waits for loop() to
+  // drain it instead of blocking, which previously discarded the tail.
+  bool finishing_turn_ = false;
+  uint32_t finish_started_ms_ = 0;
   uint32_t prebuffered_ms_ = 0;
   uint16_t last_mic_rms_ = 0;
   uint16_t last_mic_peak_ = 0;
@@ -162,6 +185,10 @@ class GeminiLiveProbe {
   bool vad_end_sensitivity_low_ = true;
   bool vad_turn_includes_all_input_ = true;
   bool search_grounding_ = true;
+  // Search runs server-side, so these only record what the metadata reported.
+  bool grounding_used_this_turn_ = false;
+  uint32_t grounding_turns_ = 0;
+  bool grounding_shape_logged_ = false;
   String api_key_storage_;
   String model_ = kDefaultModel;
   String voice_name_ = kDefaultVoice;
@@ -179,13 +206,15 @@ class GeminiLiveProbe {
   static void wsEvent(WStype_t type, uint8_t* payload, size_t length);
   void handleMessage(uint8_t* payload, size_t length);
   void handleTranscription(JsonVariant serverContent);
+  void logGroundingMetadata(JsonVariant doc);
   bool handleServerError(JsonVariant doc);
   void completeResponseTurn();
+  void finalizeResponseTurn();
   void appendOutputTranscriptChunk(const char* text);
   void flushOutputTranscript();
   void recordAndSendAudioChunk();
   void playListeningChirp();
   void sendRealtimeAudioBase64(const String& b64);
   String encodeBase64(const uint8_t* input, size_t size);
-  int decodeBase64(const char* input, int size, char* output);
+  int decodeBase64(const char* input, int size, char* output, size_t output_capacity);
 };

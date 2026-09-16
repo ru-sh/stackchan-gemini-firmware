@@ -38,6 +38,12 @@ bool GeminiLiveProbe::begin(const char* api_key) {
     memset(rec_buf_, 0, RT_REC_SAMPLES * sizeof(int16_t));
   }
 
+  Serial.printf("GeminiLive: audio ring %d x %u bytes (%u KB); psram free=%u heap free=%u\n",
+                AUDIO_RING_BUFFERS, static_cast<unsigned>(AUDIO_BUFFER_BYTES),
+                static_cast<unsigned>(AUDIO_RING_BUFFERS * AUDIO_BUFFER_BYTES / 1024),
+                static_cast<unsigned>(ESP.getFreePsram()),
+                static_cast<unsigned>(ESP.getFreeHeap()));
+
   configured_ = (api_key_ && api_key_[0]);
   Serial.println(configured_ ? "GeminiLive: configured lazy" : "GeminiLive: missing api key");
   return configured_;
@@ -78,6 +84,8 @@ void GeminiLiveProbe::disconnect(bool intentional, const char* finalEmotion) {
   connect_started_ms_ = 0;
   turn_in_progress_ = false;
   interaction_pending_ms_ = 0;
+  finishing_turn_ = false;
+  finish_started_ms_ = 0;
   ws_.disconnect();
   if (emotion_) emotion_->setEmotion(intentional ? intentional_disconnect_emotion_.c_str() : "error");
 }
@@ -86,6 +94,16 @@ void GeminiLiveProbe::loop() {
   if (connect_requested_ || connected_) ws_.loop();
   if (realtime_recording_) recordAndSendAudioChunk();
   if (speaking_) drainAudioQueue();
+  if (finishing_turn_) {
+    // Finish only when nothing is queued locally and the speaker has fallen
+    // silent. Late audio for the same turn simply extends this naturally.
+    const bool drained = pending_count_ == 0 && !M5.Speaker.isPlaying();
+    const bool stuck = finish_started_ms_ && millis() - finish_started_ms_ > TURN_DRAIN_TIMEOUT_MS;
+    if (stuck) {
+      Serial.printf("GeminiLive: turn drain timeout; %d chunks unplayed\n", pending_count_);
+    }
+    if (drained || stuck) finalizeResponseTurn();
+  }
   if (connect_requested_ && !isReady() && connect_started_ms_ &&
       millis() - connect_started_ms_ > CONNECT_TIMEOUT_MS) {
     Serial.println("GeminiLive: connect timeout; reset to sleep");
@@ -175,6 +193,10 @@ void GeminiLiveProbe::sendSetup() {
       }
     }
   }
+  Serial.printf("GeminiLive: setup tools entries=%u declarations=%u googleSearch=%s\n",
+                static_cast<unsigned>(tools.size()),
+                static_cast<unsigned>(functionDeclarations.size()),
+                search_grounding_ ? "yes" : "no");
   auto sys = setup["systemInstruction"].to<JsonObject>();
   sys["role"] = "user";
   String instruction =
@@ -310,8 +332,13 @@ void GeminiLiveProbe::drainAudioQueue() {
 
 void GeminiLiveProbe::streamAudioDeltaBase64(const String& b64) {
   uint8_t* buf = audio_buf_[next_audio_buf_];
-  int len = decodeBase64(b64.c_str(), b64.length(), reinterpret_cast<char*>(buf));
-  if (len > 0) {
+  int len = decodeBase64(b64.c_str(), b64.length(), reinterpret_cast<char*>(buf),
+                         AUDIO_BUFFER_BYTES);
+  if (len <= 0) {
+    ++audio_dropped_;
+    return;
+  }
+  {
     if (!speaking_) {
       Serial.println("GeminiLive: input audio committed");
       speaking_ = true;
@@ -328,6 +355,7 @@ void GeminiLiveProbe::streamAudioDeltaBase64(const String& b64) {
       last_audio_rx_ms_ = 0;
       pending_head_ = 0;
       pending_count_ = 0;
+      pending_peak_ = 0;
       prebuffering_ = true;
       prebuffered_ms_ = 0;
     }
@@ -359,6 +387,7 @@ void GeminiLiveProbe::streamAudioDeltaBase64(const String& b64) {
       pending_buf_[slot] = next_audio_buf_;
       pending_len_[slot] = len;
       ++pending_count_;
+      if (pending_count_ > pending_peak_) pending_peak_ = pending_count_;
       next_audio_buf_ = (next_audio_buf_ + 1) % AUDIO_RING_BUFFERS;
       prebuffered_ms_ += static_cast<uint32_t>((len / 2) * 1000 / 24000);
     } else {
@@ -602,6 +631,8 @@ void GeminiLiveProbe::wsEvent(WStype_t type, uint8_t* payload, size_t length) {
       self_->connect_requested_ = false;
       self_->turn_in_progress_ = false;
       self_->interaction_pending_ms_ = 0;
+      self_->finishing_turn_ = false;
+      self_->finish_started_ms_ = 0;
       if (self_->emotion_) self_->emotion_->setEmotion(should_sleep ? "sleep" : self_->intentional_disconnect_emotion_.c_str());
       break;
     }
@@ -619,6 +650,25 @@ void GeminiLiveProbe::handleMessage(uint8_t* payload, size_t length) {
   }
 
   if (handleServerError(doc.as<JsonVariant>())) return;
+
+  // Last resort for locating grounding data: if the raw frame mentions it but
+  // the parser above found nothing, print the top-level keys so the next
+  // session can see where it actually sits instead of guessing again.
+  if (!grounding_shape_logged_ && length > 8) {
+    for (size_t i = 0; i + 8 <= length; ++i) {
+      if (memcmp(payload + i, "rounding", 8) != 0) continue;
+      grounding_shape_logged_ = true;
+      Serial.print("GeminiLive: frame mentions grounding; top-level keys:");
+      for (JsonPair kv : doc.as<JsonObject>()) Serial.printf(" %s", kv.key().c_str());
+      JsonVariant sc = doc["serverContent"];
+      if (!sc.isNull()) {
+        Serial.print(" | serverContent:");
+        for (JsonPair kv : sc.as<JsonObject>()) Serial.printf(" %s", kv.key().c_str());
+      }
+      Serial.println();
+      break;
+    }
+  }
 
   JsonVariant goAway = doc["goAway"];
   if (!goAway.isNull()) {
@@ -648,6 +698,7 @@ void GeminiLiveProbe::handleMessage(uint8_t* payload, size_t length) {
 
   JsonVariant serverContent = doc["serverContent"];
   handleTranscription(serverContent);
+  logGroundingMetadata(doc.as<JsonVariant>());
 
   // Accept both spellings and both nesting levels, matching the defensive
   // parsing in the upstream raw-websocket sample.
@@ -733,20 +784,38 @@ void GeminiLiveProbe::handleMessage(uint8_t* payload, size_t length) {
 void GeminiLiveProbe::completeResponseTurn() {
   turn_in_progress_ = false;
   interaction_pending_ms_ = 0;
+  Serial.printf("GeminiLive: turnGrounding used=%s sessionTurns=%lu\n",
+                grounding_used_this_turn_ ? "yes" : "no",
+                static_cast<unsigned long>(grounding_turns_));
+  grounding_used_this_turn_ = false;
   flushOutputTranscript();
-  Serial.printf("GeminiLive: responseComplete chunks=%lu dropped=%lu wait_ms=%lu underruns=%lu\n",
+  Serial.printf("GeminiLive: responseComplete chunks=%lu dropped=%lu wait_ms=%lu underruns=%lu peakPending=%d/%d\n",
                 static_cast<unsigned long>(audio_chunks_),
                 static_cast<unsigned long>(audio_dropped_),
                 static_cast<unsigned long>(audio_backpressure_wait_ms_),
-                static_cast<unsigned long>(audio_underruns_));
+                static_cast<unsigned long>(audio_underruns_),
+                pending_peak_, AUDIO_PENDING_MAX);
   if (speaking_) {
-    // Whatever is still buffered is the tail of the answer; play it out rather
-    // than tearing the speaker down mid-sentence.
+    // The tail can be many seconds of audio and drains only at realtime, so
+    // waiting for it here blocked the websocket and, worse, gave up after a
+    // fixed guard and tore the speaker down with the rest still queued. That
+    // discarded audio silently: it was never counted as dropped. Hand the
+    // drain to loop() and finish the turn once the speaker is genuinely idle.
     prebuffering_ = false;
-    uint32_t drain_guard = 0;
-    while (pending_count_ > 0 && drain_guard < 5000) { drainAudioQueue(); delay(1); ++drain_guard; }
+    if (!finishing_turn_) {
+      finishing_turn_ = true;
+      finish_started_ms_ = millis();
+    }
+    return;
+  }
+  finalizeResponseTurn();
+}
+
+void GeminiLiveProbe::finalizeResponseTurn() {
+  finishing_turn_ = false;
+  finish_started_ms_ = 0;
+  if (speaking_) {
     speaking_ = false;
-    while (M5.Speaker.isPlaying()) { delay(1); }
     M5.Speaker.end();
     M5.Speaker.begin();
     M5.Speaker.setVolume(speaker_volume_);
@@ -785,6 +854,51 @@ bool GeminiLiveProbe::handleServerError(JsonVariant doc) {
   }
   disconnect(true, "error");
   return true;
+}
+
+// Grounding with Google Search executes on Google's side, so it never arrives
+// as a toolCall and leaves no trace in the tool bridge. The attached metadata
+// is the only local evidence a search ran, which otherwise makes a working
+// grounding setup indistinguishable from a disabled one.
+void GeminiLiveProbe::logGroundingMetadata(JsonVariant doc) {
+  if (doc.isNull()) return;
+  // Search ran and produced answers while this reported nothing, so the earlier
+  // guess at one location was wrong. Check every level the metadata is known to
+  // ride on rather than assuming; an unmatched frame is caught by the raw probe
+  // in handleMessage, which prints the shape so this list can be corrected.
+  JsonVariant serverContent = doc["serverContent"];
+  JsonVariant candidates[] = {
+      serverContent["groundingMetadata"],      serverContent["grounding_metadata"],
+      serverContent["modelTurn"]["groundingMetadata"],
+      serverContent["modelTurn"]["grounding_metadata"],
+      doc["groundingMetadata"],                doc["grounding_metadata"],
+      doc["candidates"][0]["groundingMetadata"],
+      doc["candidates"][0]["grounding_metadata"],
+  };
+  JsonVariant grounding;
+  for (JsonVariant c : candidates) {
+    if (!c.isNull()) { grounding = c; break; }
+  }
+  if (grounding.isNull()) return;
+
+  JsonArray queries = grounding["webSearchQueries"].as<JsonArray>();
+  if (queries.isNull()) queries = grounding["web_search_queries"].as<JsonArray>();
+  JsonArray chunks = grounding["groundingChunks"].as<JsonArray>();
+  if (chunks.isNull()) chunks = grounding["grounding_chunks"].as<JsonArray>();
+
+  if (!grounding_used_this_turn_) {
+    grounding_used_this_turn_ = true;
+    ++grounding_turns_;
+  }
+  Serial.printf("GeminiLive: groundingMetadata queries=%u chunks=%u\n",
+                static_cast<unsigned>(queries.isNull() ? 0 : queries.size()),
+                static_cast<unsigned>(chunks.isNull() ? 0 : chunks.size()));
+  if (!queries.isNull()) {
+    for (JsonVariant q : queries) {
+      const char* text = q.as<const char*>();
+      if (text && text[0]) Serial.printf("GeminiLive: searchQuery=%s\n", text);
+    }
+  }
 }
 
 void GeminiLiveProbe::handleTranscription(JsonVariant serverContent) {
@@ -839,7 +953,20 @@ void GeminiLiveProbe::flushOutputTranscript() {
   transcript_output_buffer_ = "";
 }
 
-int GeminiLiveProbe::decodeBase64(const char* input, int size, char* output) {
+int GeminiLiveProbe::decodeBase64(const char* input, int size, char* output,
+                                  size_t output_capacity) {
+  // base64_decode_block writes as much as the input demands and knows nothing
+  // about the destination, which was survivable only while buffers were far
+  // larger than any chunk. Now that they are sized to the real chunk, reject
+  // anything that could not fit instead of running off the end of the buffer.
+  if (size < 0) return -1;
+  const size_t max_decoded = (static_cast<size_t>(size) / 4 + 1) * 3;
+  if (max_decoded > output_capacity) {
+    Serial.printf("GeminiLive: audio chunk too large b64=%d decoded<=%u cap=%u\n",
+                  size, static_cast<unsigned>(max_decoded),
+                  static_cast<unsigned>(output_capacity));
+    return -1;
+  }
   base64_decodestate state;
   base64_init_decodestate(&state);
   return base64_decode_block(input, size, output, &state);

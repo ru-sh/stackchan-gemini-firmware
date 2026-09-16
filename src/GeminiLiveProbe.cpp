@@ -85,6 +85,7 @@ void GeminiLiveProbe::disconnect(bool intentional, const char* finalEmotion) {
 void GeminiLiveProbe::loop() {
   if (connect_requested_ || connected_) ws_.loop();
   if (realtime_recording_) recordAndSendAudioChunk();
+  if (speaking_) drainAudioQueue();
   if (connect_requested_ && !isReady() && connect_started_ms_ &&
       millis() - connect_started_ms_ > CONNECT_TIMEOUT_MS) {
     Serial.println("GeminiLive: connect timeout; reset to sleep");
@@ -288,6 +289,25 @@ bool GeminiLiveProbe::sendImageFrame(const String& imageBase64, const String& pr
   return sent;
 }
 
+// Hands buffered chunks to the speaker while it has room. Never blocks: unsent
+// chunks simply wait for the next call, so the websocket keeps being serviced.
+void GeminiLiveProbe::drainAudioQueue() {
+  if (prebuffering_) return;
+  while (pending_count_ > 0 && M5.Speaker.isPlaying(1) < 2) {
+    const int slot = pending_head_;
+    uint8_t* buf = audio_buf_[pending_buf_[slot]];
+    const int len = pending_len_[slot];
+    if (!M5.Speaker.playRaw(reinterpret_cast<int16_t*>(buf), len / 2, 24000, false, 1, 1, false)) {
+      ++audio_dropped_;
+      Serial.println("GeminiLive: audio chunk queue failed");
+      break;
+    }
+    pending_head_ = (pending_head_ + 1) % AUDIO_RING_BUFFERS;
+    --pending_count_;
+    ++audio_chunks_;
+  }
+}
+
 void GeminiLiveProbe::streamAudioDeltaBase64(const String& b64) {
   uint8_t* buf = audio_buf_[next_audio_buf_];
   int len = decodeBase64(b64.c_str(), b64.length(), reinterpret_cast<char*>(buf));
@@ -304,26 +324,55 @@ void GeminiLiveProbe::streamAudioDeltaBase64(const String& b64) {
       audio_chunks_ = 0;
       audio_dropped_ = 0;
       audio_backpressure_wait_ms_ = 0;
+      audio_underruns_ = 0;
+      last_audio_rx_ms_ = 0;
+      pending_head_ = 0;
+      pending_count_ = 0;
+      prebuffering_ = true;
+      prebuffered_ms_ = 0;
     }
 
-    // M5Unified has a tiny per-channel queue (2 slots). Gemini can deliver
-    // audio faster than realtime, so blindly calling playRaw can drop chunks.
-    // Backpressure only when the fixed voice channel queue is full; do NOT wait
-    // for all playback to finish between chunks, because that creates gaps.
-    uint32_t waited = 0;
-    while (M5.Speaker.isPlaying(1) >= 2 && waited < 2000) {
-      delay(1);
-      ++waited;
+    // Measured at the moment fresh audio arrives: if the channel is idle right
+    // now, the DAC already ran dry and that silence was the audible gap. Checked
+    // here rather than in loop() so a turn draining normally is not miscounted.
+    const uint32_t now_rx = millis();
+    const uint32_t arrival_gap = last_audio_rx_ms_ ? now_rx - last_audio_rx_ms_ : 0;
+    if (last_audio_rx_ms_ && M5.Speaker.isPlaying(1) == 0) {
+      ++audio_underruns_;
+      Serial.printf("AudioUnderrun: n=%lu arrival_gap_ms=%lu chunk=%lu\n",
+                    static_cast<unsigned long>(audio_underruns_),
+                    static_cast<unsigned long>(arrival_gap),
+                    static_cast<unsigned long>(audio_chunks_));
+    } else if (arrival_gap >= AUDIO_ARRIVAL_REPORT_MS) {
+      Serial.printf("AudioArrivalGap: gap_ms=%lu queue=%d chunk=%lu\n",
+                    static_cast<unsigned long>(arrival_gap),
+                    M5.Speaker.isPlaying(1),
+                    static_cast<unsigned long>(audio_chunks_));
     }
-    audio_backpressure_wait_ms_ += waited;
-    bool queued = M5.Speaker.playRaw(reinterpret_cast<int16_t*>(buf), len / 2, 24000, false, 1, 1, false);
-    if (queued) {
-      ++audio_chunks_;
+    last_audio_rx_ms_ = now_rx;
+
+    // Hold decoded chunks here instead of blocking on the speaker's two-slot
+    // queue. Waiting inline stalled ws_.loop(), and starting playback on the
+    // first chunk left no margin for the jitter that follows.
+    if (pending_count_ < AUDIO_PENDING_MAX) {
+      int slot = (pending_head_ + pending_count_) % AUDIO_RING_BUFFERS;
+      pending_buf_[slot] = next_audio_buf_;
+      pending_len_[slot] = len;
+      ++pending_count_;
       next_audio_buf_ = (next_audio_buf_ + 1) % AUDIO_RING_BUFFERS;
+      prebuffered_ms_ += static_cast<uint32_t>((len / 2) * 1000 / 24000);
     } else {
       ++audio_dropped_;
-      Serial.println("GeminiLive: audio chunk queue failed");
+      Serial.println("GeminiLive: audio pending queue full");
     }
+
+    if (prebuffering_ &&
+        (prebuffered_ms_ >= AUDIO_PREBUFFER_MS || pending_count_ >= AUDIO_PENDING_MAX)) {
+      Serial.printf("GeminiLive: prebuffered %lu ms in %d chunks; starting playback\n",
+                    static_cast<unsigned long>(prebuffered_ms_), pending_count_);
+      prebuffering_ = false;
+    }
+    drainAudioQueue();
   }
 }
 
@@ -685,11 +734,17 @@ void GeminiLiveProbe::completeResponseTurn() {
   turn_in_progress_ = false;
   interaction_pending_ms_ = 0;
   flushOutputTranscript();
-  Serial.printf("GeminiLive: responseComplete chunks=%lu dropped=%lu wait_ms=%lu\n",
+  Serial.printf("GeminiLive: responseComplete chunks=%lu dropped=%lu wait_ms=%lu underruns=%lu\n",
                 static_cast<unsigned long>(audio_chunks_),
                 static_cast<unsigned long>(audio_dropped_),
-                static_cast<unsigned long>(audio_backpressure_wait_ms_));
+                static_cast<unsigned long>(audio_backpressure_wait_ms_),
+                static_cast<unsigned long>(audio_underruns_));
   if (speaking_) {
+    // Whatever is still buffered is the tail of the answer; play it out rather
+    // than tearing the speaker down mid-sentence.
+    prebuffering_ = false;
+    uint32_t drain_guard = 0;
+    while (pending_count_ > 0 && drain_guard < 5000) { drainAudioQueue(); delay(1); ++drain_guard; }
     speaking_ = false;
     while (M5.Speaker.isPlaying()) { delay(1); }
     M5.Speaker.end();

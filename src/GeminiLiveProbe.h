@@ -66,6 +66,7 @@ class GeminiLiveProbe {
   bool requestTextTurn(const String& text);
   bool sendImageFrame(const String& imageBase64, const String& prompt);
   void streamAudioDeltaBase64(const String& b64);
+  void drainAudioQueue();
   bool isReady() const { return connected_ && setup_complete_; }
   bool isRecording() const { return realtime_recording_; }
   bool isSpeaking() const { return speaking_; }
@@ -78,6 +79,7 @@ class GeminiLiveProbe {
   uint32_t audioChunksPlayed() const { return audio_chunks_; }
   uint32_t audioChunksDropped() const { return audio_dropped_; }
   uint32_t audioBackpressureWaitMs() const { return audio_backpressure_wait_ms_; }
+  uint32_t audioUnderruns() const { return audio_underruns_; }
   void setContinuousConversation(bool enabled) { continuous_conversation_ = enabled; }
   bool requestConversationStart();
   void stopConversation();
@@ -98,6 +100,14 @@ class GeminiLiveProbe {
   // How long to keep a turn open after the last IN_PROGRESS interaction
   // status before giving up and completing it anyway.
   static constexpr uint32_t INTERACTION_STATUS_WATCHDOG_MS = 20000;
+  // Report arrival gaps big enough to matter against the speaker buffer depth.
+  static constexpr uint32_t AUDIO_ARRIVAL_REPORT_MS = 150;
+  // Playback used to start on the first chunk with nothing behind it, so any
+  // jitter in the opening moments ran the DAC dry. Hold this much audio before
+  // the first chunk is queued; after that the stream over-delivers and keeps
+  // itself ahead. Kept below the ring capacity so decoding never overtakes it.
+  static constexpr uint32_t AUDIO_PREBUFFER_MS = 400;
+  static constexpr int AUDIO_PENDING_MAX = AUDIO_RING_BUFFERS - 3;
 
   WebSocketsClient ws_;
   uint8_t* audio_buf_[AUDIO_RING_BUFFERS] = {nullptr};
@@ -129,6 +139,18 @@ class GeminiLiveProbe {
   uint32_t audio_chunks_ = 0;
   uint32_t audio_dropped_ = 0;
   uint32_t audio_backpressure_wait_ms_ = 0;
+  // A loop stall is not an audio gap: the backpressure wait happens because the
+  // speaker queue is full, which means playback is healthy. The gap is the
+  // opposite condition, the queue running dry with more audio still to come.
+  uint32_t audio_underruns_ = 0;
+  uint32_t last_audio_rx_ms_ = 0;
+  // Chunks decoded but not yet handed to the speaker, oldest first.
+  int pending_buf_[AUDIO_RING_BUFFERS] = {0};
+  int pending_len_[AUDIO_RING_BUFFERS] = {0};
+  int pending_head_ = 0;
+  int pending_count_ = 0;
+  bool prebuffering_ = false;
+  uint32_t prebuffered_ms_ = 0;
   uint16_t last_mic_rms_ = 0;
   uint16_t last_mic_peak_ = 0;
   uint32_t mic_chunks_sent_ = 0;

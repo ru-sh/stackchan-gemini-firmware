@@ -17,6 +17,28 @@ class GeminiLiveProbe {
   static constexpr int AUDIO_RING_BUFFERS = 8;
   static constexpr size_t AUDIO_BUFFER_BYTES = 100 * 1024;
 
+  // Live API model shipped as the default. Runtime configs written by older
+  // firmware still name the retired preview model, so loaders upgrade that
+  // exact string in place and leave any other user choice untouched.
+  static constexpr const char* kDefaultModel = "models/gemini-3.8-live";
+  static constexpr const char* kLegacyModel = "models/gemini-3.1-flash-live-preview";
+  static String upgradeLegacyModel(const String& model) {
+    return model == kLegacyModel ? String(kDefaultModel) : model;
+  }
+
+  // Prebuilt voices confirmed available on the default Live model. Older
+  // configs may name one of the wider catalogue that this model does not
+  // offer, which the API rejects at setup, so unknown names fall back to the
+  // default rather than failing the session.
+  static constexpr const char* kDefaultVoice = "Puck";
+  static String supportedVoice(const String& voice) {
+    if (voice == "Puck" || voice == "Charon" || voice == "Kore" ||
+        voice == "Fenrir" || voice == "Aoede") {
+      return voice;
+    }
+    return String(kDefaultVoice);
+  }
+
   bool begin(const char* api_key);
   bool connect();
   void disconnect(bool intentional = true, const char* finalEmotion = nullptr);
@@ -71,6 +93,9 @@ class GeminiLiveProbe {
   static constexpr uint32_t CONTINUOUS_CONVERSATION_TIMEOUT_MS = 150000;
   static constexpr uint32_t CONTINUOUS_RECORD_WATCHDOG_MS = 2500;
   static constexpr uint32_t END_SESSION_GRACE_MS = 12000;
+  // How long to keep a turn open after the last IN_PROGRESS interaction
+  // status before giving up and completing it anyway.
+  static constexpr uint32_t INTERACTION_STATUS_WATCHDOG_MS = 20000;
 
   WebSocketsClient ws_;
   uint8_t* audio_buf_[AUDIO_RING_BUFFERS] = {nullptr};
@@ -89,11 +114,16 @@ class GeminiLiveProbe {
   bool resume_conversation_after_text_ = false;
   bool mic_ready_for_speech_ = false;
   bool end_session_requested_ = false;
+  // Models with background reasoning keep working after turnComplete, so the
+  // interaction status drives end-of-turn once the server has sent one.
+  bool saw_interaction_status_ = false;
+  bool turn_in_progress_ = false;
   uint32_t record_started_ms_ = 0;
   uint32_t last_activity_ms_ = 0;
   uint32_t connect_started_ms_ = 0;
   uint32_t stopped_recording_ms_ = 0;
   uint32_t end_session_requested_ms_ = 0;
+  uint32_t interaction_pending_ms_ = 0;
   uint32_t audio_chunks_ = 0;
   uint32_t audio_dropped_ = 0;
   uint32_t audio_backpressure_wait_ms_ = 0;
@@ -108,8 +138,8 @@ class GeminiLiveProbe {
   bool vad_end_sensitivity_low_ = true;
   bool vad_turn_includes_all_input_ = true;
   String api_key_storage_;
-  String model_ = "models/gemini-3.1-flash-live-preview";
-  String voice_name_ = "Puck";
+  String model_ = kDefaultModel;
+  String voice_name_ = kDefaultVoice;
   String system_prompt_;
   String persona_prompt_;
   String intentional_disconnect_emotion_ = "neutral";
@@ -124,6 +154,8 @@ class GeminiLiveProbe {
   static void wsEvent(WStype_t type, uint8_t* payload, size_t length);
   void handleMessage(uint8_t* payload, size_t length);
   void handleTranscription(JsonVariant serverContent);
+  bool handleServerError(JsonVariant doc);
+  void completeResponseTurn();
   void appendOutputTranscriptChunk(const char* text);
   void flushOutputTranscript();
   void recordAndSendAudioChunk();

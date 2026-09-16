@@ -4,6 +4,14 @@
 #include <M5Unified.h>
 #include <M5StackChan.h>
 
+const char* GeminiToolBridge::nonBlockingScheduling(const String& name) {
+  // INTERRUPT: the picture is what the user just asked about, so it should cut
+  // in. WHEN_IDLE: a gateway answer can wait for a natural pause.
+  if (name == "look_with_camera") return "INTERRUPT";
+  if (name == "ask_hermes") return "WHEN_IDLE";
+  return nullptr;
+}
+
 String GeminiToolBridge::functionDeclarationsJson() {
   // Keep tool declarations deterministic: do not block Gemini setup on a LAN
   // /tools fetch. Local robot tools are handled here; gateway tools still go
@@ -85,6 +93,9 @@ String GeminiToolBridge::functionDeclarationsJson() {
   ahProps["urgency"]["type"] = "string";
   ahProps["urgency"]["description"] = "low, normal, or high.";
   ahParams["required"].add("question");
+  // Gateway round-trips are slow; let the model keep talking while it waits and
+  // deliver the answer when it lands rather than stalling the turn.
+  askHermes["behavior"] = "NON_BLOCKING";
 
   auto setEmotion = arr.add<JsonObject>();
   setEmotion["name"] = "set_emotion";
@@ -140,6 +151,9 @@ String GeminiToolBridge::functionDeclarationsJson() {
   auto lcProps = lcParams["properties"].to<JsonObject>();
   lcProps["question"]["type"] = "string";
   lcProps["question"]["description"] = "Short visual question, e.g. 'what is in front of me?' or 'what is on the table?'";
+  // Capture plus upload takes seconds; NON_BLOCKING keeps the session alive
+  // instead of leaving the model waiting on a blocking call.
+  lookCamera["behavior"] = "NON_BLOCKING";
 
   auto endSession = arr.add<JsonObject>();
   endSession["name"] = "end_session";

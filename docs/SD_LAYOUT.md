@@ -74,10 +74,18 @@ and enable Gemini in `runtime.json`:
 ```json
 {
   "gemini_enabled": true,
-  "gemini_model": "models/gemini-3.1-flash-live-preview",
+  "gemini_model": "models/gemini-3.8-live",
   "gemini_voice": "Puck"
 }
 ```
+
+`gemini_model` written by older firmware (`models/gemini-3.1-flash-live-preview`)
+is upgraded to `models/gemini-3.8-live` when the config is read, so an existing
+SD card needs no manual edit. Any other value you set is left untouched.
+
+`gemini_voice` accepts the prebuilt voices this model offers: `Puck`, `Charon`,
+`Kore`, `Fenrir`, `Aoede`. Anything else falls back to `Puck` instead of being
+rejected by the API at session setup.
 
 You can also edit prompts:
 

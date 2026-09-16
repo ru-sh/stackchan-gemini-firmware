@@ -5,6 +5,7 @@
 #include <FS.h>
 #include "ToolGatewayClient.h"
 #include "WebConfigServer.h"
+#include "GeminiLiveProbe.h"
 
 // Loads StackChan option-B runtime configuration from SD without printing secrets.
 // Secret values can be read by callers that need them, but status/log helpers expose only set/missing.
@@ -12,8 +13,8 @@ class ConfigManager {
  public:
   struct RuntimeConfig {
     String robotId = "stackchan";
-    String geminiModel = "models/gemini-3.1-flash-live-preview";
-    String geminiVoice = "Puck";
+    String geminiModel = GeminiLiveProbe::kDefaultModel;
+    String geminiVoice = GeminiLiveProbe::kDefaultVoice;
     bool wifiEnabled = false;
     bool geminiEnabled = false;
     bool gatewayEnabled = false;

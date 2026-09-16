@@ -7,7 +7,12 @@ namespace {
 constexpr uint8_t kLedCount = 12;
 constexpr uint32_t kFrameIntervalMs = 35;  // ~28 FPS for LEDs; smooth, but light on CPU/audio.
 constexpr uint32_t kFaceIntervalMs = 90;   // ~11 FPS for idle LCD; avoid stealing time from audio.
-constexpr uint32_t kSpeakingFaceIntervalMs = 40;  // Stable LCD cadence while speaking; keep audio safe.
+// renderFace() measures at ~45 ms on this panel, so the old 40 ms cadence asked
+// for a redraw more often than one could finish and the renderer ran flat out,
+// starving the audio path it was meant to protect. Keep this comfortably above
+// the render cost: ~8 FPS still reads as animated while leaving the loop time
+// the speaker needs to stay ahead of its buffer.
+constexpr uint32_t kSpeakingFaceIntervalMs = 120;
 constexpr uint32_t kSleepDisplayOffMs = 30000;  // Anti-retention: show sleep face briefly, then blank LCD.
 
 String lowerTrimmed(String s) {

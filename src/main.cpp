@@ -26,6 +26,8 @@ ConfigManager configManager(SD);
 volatile bool g_voice_toggle_requested = false;
 static uint8_t g_speaker_volume = 200;
 static constexpr uint32_t kBootNeutralSleepMs = 45000;
+// Well under the speaker buffer depth, so anything long enough to underrun is caught.
+static constexpr uint32_t kLoopStallReportMs = 250;
 static constexpr uint32_t kPowerButtonLedOffHoldMs = 700;
 static uint32_t g_last_human_activity_ms = 0;
 static uint32_t g_power_button_pressed_ms = 0;
@@ -162,9 +164,22 @@ static void configureAudio(uint8_t micMagnification = 16, uint8_t micNoiseFilter
   M5.Mic.config(mic);
 
   auto spk = M5.Speaker.config();
-  spk.sample_rate = 96000;
+  // Integer 2x of the 24 kHz Gemini Live stream. Running the output at 24 kHz
+  // instead removes the resampler's interpolation, which leaves the image
+  // frequencies just above 12 kHz for the amplifier's reconstruction filter to
+  // deal with, and the voice rings. 96000 was clean but quadrupled DMA traffic
+  // and left the buffers below only a quarter as many milliseconds deep.
+  spk.sample_rate = 48000;
   spk.task_pinned_core = APP_CPU_NUM;
   spk.magnification = 16;
+  // Gemini audio arrives in bursts, and the only slack behind it is the two
+  // queued chunks plus these DMA buffers. M5Unified's defaults (256 x 8) are
+  // 2048 frames, which underruns the DAC on a short network stall and is heard
+  // as a gap. 512 x 16 is 8192 frames, about 170 ms at this rate.
+  spk.dma_buf_len = 512;
+  spk.dma_buf_count = 16;
+  // Default is 2, below the WiFi and lwIP tasks that compete for the same CPU.
+  spk.task_priority = 5;
   M5.Speaker.config(spk);
 }
 
@@ -393,10 +408,27 @@ void loop() {
     return;
   }
 
+  // Audio underruns whenever one iteration blocks for longer than the speaker
+  // has buffered, so time each subsystem and name the offender when it does.
+  // Reported only above the threshold, so a healthy loop stays silent.
+  const uint32_t stall_t0 = millis();
   gemini.loop();
+  const uint32_t stall_t1 = millis();
   emotion.loop();
+  const uint32_t stall_t2 = millis();
   servoGestures.loop();
+  const uint32_t stall_t3 = millis();
   webConfig.loop();
+  const uint32_t stall_t4 = millis();
+  if (stall_t4 - stall_t0 >= kLoopStallReportMs) {
+    Serial.printf("LoopStall: total=%lu gemini=%lu emotion=%lu servo=%lu web=%lu speaking=%d\n",
+                  static_cast<unsigned long>(stall_t4 - stall_t0),
+                  static_cast<unsigned long>(stall_t1 - stall_t0),
+                  static_cast<unsigned long>(stall_t2 - stall_t1),
+                  static_cast<unsigned long>(stall_t3 - stall_t2),
+                  static_cast<unsigned long>(stall_t4 - stall_t3),
+                  gemini.isSpeaking() ? 1 : 0);
+  }
   bool touched = M5StackChan.TouchSensor.wasPressed();
   if (g_voice_toggle_requested) {
     g_voice_toggle_requested = false;

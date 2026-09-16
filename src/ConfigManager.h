@@ -24,8 +24,9 @@ class ConfigManager {
     String gatewayBaseUrl;
     // Primary network, kept for configs written before multi-network support.
     String wifiSsid;
-    // Every network the robot may join, strongest-first at connect time. The
-    // legacy wifiSsid is folded in as the first entry when it is not repeated.
+    // Every network the robot may join. Defined in secrets/wifi_networks.json,
+    // one entry per network carrying both ssid and password, so adding a
+    // network means editing one file. The legacy wifiSsid is folded in first.
     std::vector<String> wifiSsids;
     // A candidate must beat the current network by this many dB before the
     // robot moves. Without a margin two overlapping routers trade the
@@ -79,7 +80,7 @@ class ConfigManager {
   bool loadJsonConfig(const char* path);
   void loadPrompts();
   String readTextFile(const char* path, size_t maxBytes = 4096) const;
-  bool loadWifiNetworks(JsonVariantConst networks);
+  bool loadWifiNetworks();
   bool fileExists(const char* path) const;
   static bool asBool(JsonVariantConst v, bool fallback);
 };

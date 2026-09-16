@@ -2,7 +2,6 @@
   "robot_id": "stackchan",
   "wifi_enabled": true,
   "wifi_ssid": "YOUR_WIFI_SSID",
-  "wifi_networks": ["YOUR_WIFI_SSID", "YOUR_SECOND_WIFI_SSID"],
   "wifi_roam_margin_db": 8,
   "web_enabled": true,
   "gemini_enabled": true,

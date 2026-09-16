@@ -35,6 +35,7 @@ bool ConfigManager::load() {
     // gateway.json is optional; web UI may create it later.
   }
   loadPrompts();
+  loadWifiNetworks();
   ready_ = true;
   return true;
 }
@@ -62,7 +63,6 @@ bool ConfigManager::loadJsonConfig(const char* path) {
   config_.geminiSearchGrounding = doc["gemini_search_grounding"] | config_.geminiSearchGrounding;
   config_.gatewayBaseUrl = doc["gateway_base_url"] | config_.gatewayBaseUrl;
   config_.wifiSsid = doc["wifi_ssid"] | config_.wifiSsid;
-  loadWifiNetworks(doc["wifi_networks"]);
   int roamMargin = doc["wifi_roam_margin_db"] | config_.wifiRoamMarginDb;
   // Below ~3 dB the margin is inside normal signal jitter and stops preventing
   // flapping; above ~30 dB nothing would ever clear it.
@@ -119,20 +119,27 @@ String ConfigManager::readGeminiApiKey() const { return readTextFile(kGeminiKeyP
 String ConfigManager::readGatewayToken() const { return readTextFile(kGatewayTokenPath, 2048); }
 String ConfigManager::readWifiPassword() const { return readTextFile(kWifiPasswordPath, 2048); }
 
-bool ConfigManager::loadWifiNetworks(JsonVariantConst networks) {
+bool ConfigManager::loadWifiNetworks() {
   config_.wifiSsids.clear();
-  // The primary ssid stays first so an existing single-network card keeps its
-  // behaviour exactly, with extra networks acting only as alternatives.
+  // The primary ssid from runtime.json stays first, so a card written before
+  // multi-network support keeps its exact behaviour with no secrets file.
   if (config_.wifiSsid.length()) config_.wifiSsids.push_back(config_.wifiSsid);
-  if (networks.isNull() || !networks.is<JsonArrayConst>()) {
+
+  String raw = readTextFile(kWifiNetworksSecretPath, 4096);
+  if (!raw.length()) return !config_.wifiSsids.empty();
+  JsonDocument doc;
+  if (deserializeJson(doc, raw) != DeserializationError::Ok) {
+    Serial.println("WiFi: wifi_networks.json is not valid JSON; ignoring it");
     return !config_.wifiSsids.empty();
   }
-  for (JsonVariantConst entry : networks.as<JsonArrayConst>()) {
+  if (!doc.is<JsonArrayConst>()) {
+    Serial.println("WiFi: wifi_networks.json must be an array of {ssid, password}");
+    return !config_.wifiSsids.empty();
+  }
+
+  for (JsonVariantConst entry : doc.as<JsonArrayConst>()) {
     if (config_.wifiSsids.size() >= kMaxWifiNetworks) break;
-    // Accept both a bare ssid and an object, so the file can carry per-network
-    // fields later without another format change.
-    String ssid = entry.is<const char*>() ? String(entry.as<const char*>())
-                                          : String(entry["ssid"] | "");
+    String ssid = entry["ssid"] | "";
     ssid.trim();
     if (!ssid.length()) continue;
     bool duplicate = false;
@@ -149,12 +156,19 @@ String ConfigManager::readWifiPasswordFor(const String& ssid) const {
   String raw = readTextFile(kWifiNetworksSecretPath, 4096);
   if (raw.length()) {
     JsonDocument doc;
-    if (deserializeJson(doc, raw) == DeserializationError::Ok) {
-      const char* password = doc[ssid.c_str()];
-      if (password && password[0]) return String(password);
+    if (deserializeJson(doc, raw) == DeserializationError::Ok && doc.is<JsonArrayConst>()) {
+      for (JsonVariantConst entry : doc.as<JsonArrayConst>()) {
+        const char* entrySsid = entry["ssid"] | "";
+        if (!entrySsid || ssid != entrySsid) continue;
+        const char* password = entry["password"] | "";
+        if (password && password[0]) return String(password);
+        // Named with an empty password: deliberately unusable, not a lookup miss.
+        return String();
+      }
     }
   }
-  // Fall back to the single-network secret, which belongs to the primary ssid.
+  // wifi_password.txt is the single-network format from before this file
+  // existed, and only ever belonged to the primary ssid.
   if (ssid == config_.wifiSsid) return readWifiPassword();
   return String();
 }

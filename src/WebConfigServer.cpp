@@ -236,9 +236,9 @@ const char kIndexHtml[] PROGMEM = R"HTML(
   <nav class="tabs" aria-label="Settings sections"><button class="tab active" onclick="openTab('status')">Status</button><button class="tab" onclick="openTab('runtime')">Runtime</button><button class="tab" onclick="openTab('gateway')">Gateway</button><button class="tab" onclick="openTab('secrets')">Secrets</button><button class="tab" onclick="openTab('security')">Security</button><button class="tab" onclick="openTab('prompts')">Prompts</button><button class="tab" onclick="openTab('memory')">Memory</button></nav>
   <div class="grid">
     <section class="card active" data-tab="status"><h2>Status</h2><button onclick="loadStatus()" class="secondary">Refresh</button><button onclick="voiceToggle()">Wake / sleep</button><p class="muted">Uses the same voice toggle as touch: if the dialogue is asleep it wakes it, if it is listening it stops it.</p><pre id="status">...</pre></section>
-    <section class="card" data-tab="runtime"><h2>Runtime</h2><div class="row"><div><label>Robot ID</label><input id="robotId" value="stackchan"></div><div><label>Gemini model</label><input id="geminiModel" placeholder="models/gemini-3.8-live"></div></div><label>Gemini voice</label><select id="geminiVoice"><option value="Puck">Puck — upbeat</option><option value="Charon">Charon — informative</option><option value="Kore">Kore — firm</option><option value="Fenrir">Fenrir — excitable</option><option value="Aoede">Aoede — breezy</option></select><p class="muted">Voice applies to the next Gemini Live session after reboot/reconnect. Voices outside this list are not offered by the Live model and fall back to Puck.</p><label>Wi‑Fi SSID (primary)</label><input id="wifiSsid" placeholder="SSID is stored; password is stored separately in secrets"><label>Additional Wi‑Fi networks</label><textarea id="wifiNetworks" rows="3" placeholder="One SSID per line. The robot joins whichever is strongest."></textarea><p class="muted">Up to 8 networks. Each needs its password set in the Secrets tab, otherwise it is skipped.</p><label>Roam margin: <span id="wifiRoamMarginLabel">8</span> dB</label><input id="wifiRoamMargin" type="range" min="3" max="30" step="1" value="8" oninput="wifiRoamMarginLabel.textContent=this.value"><p class="muted">How much stronger another network must be before the robot moves to it. Lower values switch more eagerly; too low and two overlapping routers trade the connection back and forth. Checked only between conversations.</p><label>Gateway Base URL</label><input id="gatewayUrl" placeholder="http://gateway.local:8811/stackchan"><label>Speaker volume: <span id="speakerVolumeLabel">200</span> / 255</label><input id="speakerVolume" type="range" min="0" max="255" step="1" value="200" oninput="speakerVolumeLabel.textContent=this.value"><div class="row"><div><label>Mic gain: <span id="micMagnificationLabel">16</span> / 24</label><input id="micMagnification" type="range" min="1" max="24" step="1" value="16" oninput="micMagnificationLabel.textContent=this.value"><p class="muted">Safe runtime gain. Baseline is 16; for tests try 20→22→24.</p></div><div><label>Mic noise filter: <span id="micNoiseFilterLabel">1</span> / 4</label><input id="micNoiseFilter" type="range" min="0" max="4" step="1" value="1" oninput="micNoiseFilterLabel.textContent=this.value"><p class="muted">Baseline is 1, which keeps room noise from being sent as speech. 0 disables it; increase carefully, as the filter may suppress quiet speech.</p></div></div><div class="row"><div><label>VAD prefix padding: <span id="vadPrefixPaddingLabel">800</span> ms</label><input id="vadPrefixPadding" type="range" min="0" max="2000" step="100" value="800" oninput="vadPrefixPaddingLabel.textContent=this.value"><p class="muted">Buffer before speech starts. Helps avoid losing the beginning of a phrase.</p></div><div><label>VAD silence duration: <span id="vadSilenceDurationLabel">900</span> ms</label><input id="vadSilenceDuration" type="range" min="100" max="3000" step="100" value="900" oninput="vadSilenceDurationLabel.textContent=this.value"><p class="muted">Pause before ending an utterance. Higher values reduce cut-offs but slow responses.</p></div></div><div class="row"><label><input id="vadStartSensitivityHigh" type="checkbox"> VAD start sensitivity high</label><label><input id="vadEndSensitivityLow" type="checkbox" checked> VAD end sensitivity low</label><label><input id="vadTurnIncludesAllInput" type="checkbox"> Turn includes all input</label></div><div class="row"><label><input id="wifiEnabled" type="checkbox"> Wi‑Fi enabled</label><label><input id="webEnabled" type="checkbox"> Web UI enabled</label><label><input id="geminiEnabled" type="checkbox"> Gemini enabled</label><label><input id="geminiSearchGrounding" type="checkbox"> Google Search grounding</label><label><input id="gatewayEnabled" type="checkbox"> Gateway enabled</label></div><button onclick="saveRuntime(false)">Save runtime</button><button onclick="saveRuntime(true)" class="danger">Save and reboot</button><button onclick="loadRuntime()" class="secondary">Load runtime</button><p class="muted">Mic gain and noise filter apply immediately on Save. VAD settings apply to the next Gemini session, so end the current conversation and start a new one — no reboot needed. Speaker volume, model, voice, grounding and the enable switches need a reboot. “Save and reboot” writes settings to SD first, then reboots the robot.</p></section>
+    <section class="card" data-tab="runtime"><h2>Runtime</h2><div class="row"><div><label>Robot ID</label><input id="robotId" value="stackchan"></div><div><label>Gemini model</label><input id="geminiModel" placeholder="models/gemini-3.8-live"></div></div><label>Gemini voice</label><select id="geminiVoice"><option value="Puck">Puck — upbeat</option><option value="Charon">Charon — informative</option><option value="Kore">Kore — firm</option><option value="Fenrir">Fenrir — excitable</option><option value="Aoede">Aoede — breezy</option></select><p class="muted">Voice applies to the next Gemini Live session after reboot/reconnect. Voices outside this list are not offered by the Live model and fall back to Puck.</p><label>Wi‑Fi SSID (primary)</label><input id="wifiSsid" placeholder="SSID is stored; password is stored separately in secrets"><label>Configured Wi‑Fi networks</label><div id="wifiNetworks" class="muted">none</div><p class="muted">Defined in the Secrets tab, where each network is entered with its password. The robot joins whichever is strongest.</p><label>Roam margin: <span id="wifiRoamMarginLabel">8</span> dB</label><input id="wifiRoamMargin" type="range" min="3" max="30" step="1" value="8" oninput="wifiRoamMarginLabel.textContent=this.value"><p class="muted">How much stronger another network must be before the robot moves to it. Lower values switch more eagerly; too low and two overlapping routers trade the connection back and forth. Checked only between conversations.</p><label>Gateway Base URL</label><input id="gatewayUrl" placeholder="http://gateway.local:8811/stackchan"><label>Speaker volume: <span id="speakerVolumeLabel">200</span> / 255</label><input id="speakerVolume" type="range" min="0" max="255" step="1" value="200" oninput="speakerVolumeLabel.textContent=this.value"><div class="row"><div><label>Mic gain: <span id="micMagnificationLabel">16</span> / 24</label><input id="micMagnification" type="range" min="1" max="24" step="1" value="16" oninput="micMagnificationLabel.textContent=this.value"><p class="muted">Safe runtime gain. Baseline is 16; for tests try 20→22→24.</p></div><div><label>Mic noise filter: <span id="micNoiseFilterLabel">1</span> / 4</label><input id="micNoiseFilter" type="range" min="0" max="4" step="1" value="1" oninput="micNoiseFilterLabel.textContent=this.value"><p class="muted">Baseline is 1, which keeps room noise from being sent as speech. 0 disables it; increase carefully, as the filter may suppress quiet speech.</p></div></div><div class="row"><div><label>VAD prefix padding: <span id="vadPrefixPaddingLabel">800</span> ms</label><input id="vadPrefixPadding" type="range" min="0" max="2000" step="100" value="800" oninput="vadPrefixPaddingLabel.textContent=this.value"><p class="muted">Buffer before speech starts. Helps avoid losing the beginning of a phrase.</p></div><div><label>VAD silence duration: <span id="vadSilenceDurationLabel">900</span> ms</label><input id="vadSilenceDuration" type="range" min="100" max="3000" step="100" value="900" oninput="vadSilenceDurationLabel.textContent=this.value"><p class="muted">Pause before ending an utterance. Higher values reduce cut-offs but slow responses.</p></div></div><div class="row"><label><input id="vadStartSensitivityHigh" type="checkbox"> VAD start sensitivity high</label><label><input id="vadEndSensitivityLow" type="checkbox" checked> VAD end sensitivity low</label><label><input id="vadTurnIncludesAllInput" type="checkbox"> Turn includes all input</label></div><div class="row"><label><input id="wifiEnabled" type="checkbox"> Wi‑Fi enabled</label><label><input id="webEnabled" type="checkbox"> Web UI enabled</label><label><input id="geminiEnabled" type="checkbox"> Gemini enabled</label><label><input id="geminiSearchGrounding" type="checkbox"> Google Search grounding</label><label><input id="gatewayEnabled" type="checkbox"> Gateway enabled</label></div><button onclick="saveRuntime(false)">Save runtime</button><button onclick="saveRuntime(true)" class="danger">Save and reboot</button><button onclick="loadRuntime()" class="secondary">Load runtime</button><p class="muted">Mic gain and noise filter apply immediately on Save. VAD settings apply to the next Gemini session, so end the current conversation and start a new one — no reboot needed. Speaker volume, model, voice, grounding and the enable switches need a reboot. “Save and reboot” writes settings to SD first, then reboots the robot.</p></section>
     <section class="card" data-tab="gateway"><h2>Gateway</h2><button onclick="loadTools()" class="secondary">Check tools</button><pre id="tools"></pre></section>
-    <section class="card" data-tab="secrets"><h2>Secrets</h2><div class="row"><div><label>Gemini API key</label><input id="geminiKey" type="password" placeholder="enter/replace"></div><div><label>Gateway token</label><input id="gatewayToken" type="password" placeholder="optional"></div><div><label>Wi‑Fi password</label><input id="wifiPassword" type="password" placeholder="enter/replace"></div></div><label>Per‑network Wi‑Fi passwords</label><textarea id="wifiNetworkSecrets" rows="3" placeholder="One per line:  SSID = password"></textarea><p class="muted">Only for the additional networks listed under Runtime. Leave a password empty to remove it. Existing entries are kept unless named here.</p><button onclick="saveSecrets()" class="danger">Save secrets</button><p class="muted">The API never returns secret values, only set/missing status.</p></section>
+    <section class="card" data-tab="secrets"><h2>Secrets</h2><div class="row"><div><label>Gemini API key</label><input id="geminiKey" type="password" placeholder="enter/replace"></div><div><label>Gateway token</label><input id="gatewayToken" type="password" placeholder="optional"></div><div><label>Wi‑Fi password</label><input id="wifiPassword" type="password" placeholder="enter/replace"></div></div><label>Wi‑Fi networks</label><textarea id="wifiNetworkSecrets" rows="3" placeholder="One network per line:  SSID = password"></textarea><p class="muted">Each line defines one network completely. Up to 8. Networks not named here are left alone; naming one with an empty password removes it.</p><button onclick="saveSecrets()" class="danger">Save secrets</button><p class="muted">The API never returns secret values, only set/missing status.</p></section>
     <section class="card" data-tab="security"><h2>Web security</h2><p class="muted">If no Web password is set, the local UI is open. After setting one, browser/API access uses HTTP Basic auth with user <code>stackchan</code>.</p><label>New Web password</label><input id="webPassword" type="password" placeholder="set or change password"><button onclick="saveWebPassword()" class="danger">Set Web password</button><p class="muted">Stored on SD as SHA-256, not returned by the API.</p></section>
     <section class="card" data-tab="prompts"><h2>Additional prompts</h2><p class="muted">This is an SD/Web overlay appended to the base StackChan firmware instructions. The base prompt with camera, search, head, and safety rules is not shown or replaced here. Changes apply to the next Gemini Live session/connection.</p><label>Additional system overlay</label><textarea id="systemPrompt"></textarea><label>Persona / style overlay</label><textarea id="personaPrompt"></textarea><button onclick="savePrompts()">Save overlay</button><button onclick="loadPrompts()" class="secondary">Load</button></section>
     <section class="card" data-tab="memory"><h2>Memory</h2><label>Summary model</label><input id="summaryModel" placeholder="gemini-flash-latest"><button onclick="saveSummaryConfig()" class="secondary">Save summary model</button><button onclick="loadMemory()" class="secondary">Context</button><button onclick="loadDialogues()" class="secondary">Dialogues</button><button onclick="loadSummaries()" class="secondary">Summary</button><label>Memory search</label><input id="memoryQuery" placeholder="who did you see today?"><button onclick="searchMemory()" class="secondary">Search memory</button><button onclick="loadMemoryStats()" class="secondary">Stats</button><button onclick="runSummarize()">Summarize</button><button onclick="runVectorize()">Vectorize</button><p class="muted">Summary v2 calls Gemini Flash/Lite using the SD API key. Ordinary numbers/dates/model IDs are preserved exactly; private PIN/code/password/address values remain markers and private-memory only.</p><pre id="memory"></pre></section>
@@ -250,11 +250,11 @@ function show(id,o){document.getElementById(id).textContent=typeof o==='string'?
 function openTab(name){document.querySelectorAll('[data-tab]').forEach(e=>e.classList.toggle('active',e.dataset.tab===name));document.querySelectorAll('.tab').forEach(b=>b.classList.toggle('active',(b.getAttribute('onclick')||'').indexOf("'"+name+"'")>=0))}
 async function loadStatus(){show('status',await jget('/api/status'))}
 async function voiceToggle(){show('status',await jpost('/api/voice/toggle',{}));setTimeout(loadStatus,700)}
-async function loadRuntime(){const c=await jget('/api/runtime');robotId.value=c.robot_id||'stackchan';geminiModel.value=c.gemini_model||'';geminiVoice.value=c.gemini_voice||'Puck';wifiSsid.value='';wifiSsid.placeholder=c.wifi_ssid==='set'?'SSID is already stored; leave empty to keep it':'enter SSID';wifiNetworks.value=(c.wifi_networks||[]).join('\n');wifiRoamMargin.value=c.wifi_roam_margin_db??8;wifiRoamMarginLabel.textContent=wifiRoamMargin.value;gatewayUrl.value=c.gateway_base_url||'';speakerVolume.value=c.speaker_volume||200;speakerVolumeLabel.textContent=speakerVolume.value;micMagnification.value=c.mic_magnification||16;micMagnificationLabel.textContent=micMagnification.value;micNoiseFilter.value=c.mic_noise_filter_level??1;micNoiseFilterLabel.textContent=micNoiseFilter.value;vadPrefixPadding.value=c.vad_prefix_padding_ms||800;vadPrefixPaddingLabel.textContent=vadPrefixPadding.value;vadSilenceDuration.value=c.vad_silence_duration_ms||900;vadSilenceDurationLabel.textContent=vadSilenceDuration.value;vadStartSensitivityHigh.checked=c.vad_start_sensitivity_high===true;vadEndSensitivityLow.checked=c.vad_end_sensitivity_low!==false;vadTurnIncludesAllInput.checked=c.vad_turn_includes_all_input===true;const firstSetup=(c.wifi_ssid!=='set'&&c.wifi_password!=='set');wifiEnabled.checked=firstSetup?true:!!c.wifi_enabled;webEnabled.checked=firstSetup?true:!!c.web_enabled;geminiEnabled.checked=!!c.gemini_enabled;geminiSearchGrounding.checked=c.gemini_search_grounding!==false;gatewayEnabled.checked=!!c.gateway_enabled;show('status',c)}
-async function saveRuntime(reboot){show('status',await jpost('/api/runtime',{robot_id:robotId.value,gemini_model:geminiModel.value,gemini_voice:geminiVoice.value,wifi_ssid:wifiSsid.value,wifi_networks:wifiNetworks.value.split('\n').map(v=>v.trim()).filter(v=>v),wifi_roam_margin_db:Number(wifiRoamMargin.value),gateway_base_url:gatewayUrl.value,speaker_volume:Number(speakerVolume.value),mic_magnification:Number(micMagnification.value),mic_noise_filter_level:Number(micNoiseFilter.value),vad_prefix_padding_ms:Number(vadPrefixPadding.value),vad_silence_duration_ms:Number(vadSilenceDuration.value),vad_start_sensitivity_high:vadStartSensitivityHigh.checked,vad_end_sensitivity_low:vadEndSensitivityLow.checked,vad_turn_includes_all_input:vadTurnIncludesAllInput.checked,wifi_enabled:wifiEnabled.checked,web_enabled:webEnabled.checked,gemini_enabled:geminiEnabled.checked,gemini_search_grounding:geminiSearchGrounding.checked,gateway_enabled:gatewayEnabled.checked,reboot:!!reboot}))}
+async function loadRuntime(){const c=await jget('/api/runtime');robotId.value=c.robot_id||'stackchan';geminiModel.value=c.gemini_model||'';geminiVoice.value=c.gemini_voice||'Puck';wifiSsid.value='';wifiSsid.placeholder=c.wifi_ssid==='set'?'SSID is already stored; leave empty to keep it':'enter SSID';wifiNetworks.textContent=(c.wifi_networks||[]).join(', ')||'none';wifiRoamMargin.value=c.wifi_roam_margin_db??8;wifiRoamMarginLabel.textContent=wifiRoamMargin.value;gatewayUrl.value=c.gateway_base_url||'';speakerVolume.value=c.speaker_volume||200;speakerVolumeLabel.textContent=speakerVolume.value;micMagnification.value=c.mic_magnification||16;micMagnificationLabel.textContent=micMagnification.value;micNoiseFilter.value=c.mic_noise_filter_level??1;micNoiseFilterLabel.textContent=micNoiseFilter.value;vadPrefixPadding.value=c.vad_prefix_padding_ms||800;vadPrefixPaddingLabel.textContent=vadPrefixPadding.value;vadSilenceDuration.value=c.vad_silence_duration_ms||900;vadSilenceDurationLabel.textContent=vadSilenceDuration.value;vadStartSensitivityHigh.checked=c.vad_start_sensitivity_high===true;vadEndSensitivityLow.checked=c.vad_end_sensitivity_low!==false;vadTurnIncludesAllInput.checked=c.vad_turn_includes_all_input===true;const firstSetup=(c.wifi_ssid!=='set'&&c.wifi_password!=='set');wifiEnabled.checked=firstSetup?true:!!c.wifi_enabled;webEnabled.checked=firstSetup?true:!!c.web_enabled;geminiEnabled.checked=!!c.gemini_enabled;geminiSearchGrounding.checked=c.gemini_search_grounding!==false;gatewayEnabled.checked=!!c.gateway_enabled;show('status',c)}
+async function saveRuntime(reboot){show('status',await jpost('/api/runtime',{robot_id:robotId.value,gemini_model:geminiModel.value,gemini_voice:geminiVoice.value,wifi_ssid:wifiSsid.value,wifi_roam_margin_db:Number(wifiRoamMargin.value),gateway_base_url:gatewayUrl.value,speaker_volume:Number(speakerVolume.value),mic_magnification:Number(micMagnification.value),mic_noise_filter_level:Number(micNoiseFilter.value),vad_prefix_padding_ms:Number(vadPrefixPadding.value),vad_silence_duration_ms:Number(vadSilenceDuration.value),vad_start_sensitivity_high:vadStartSensitivityHigh.checked,vad_end_sensitivity_low:vadEndSensitivityLow.checked,vad_turn_includes_all_input:vadTurnIncludesAllInput.checked,wifi_enabled:wifiEnabled.checked,web_enabled:webEnabled.checked,gemini_enabled:geminiEnabled.checked,gemini_search_grounding:geminiSearchGrounding.checked,gateway_enabled:gatewayEnabled.checked,reboot:!!reboot}))}
 async function loadConfig(){await loadRuntime()}
 async function saveConfig(){await saveRuntime()}
-async function saveSecrets(){const nets={};wifiNetworkSecrets.value.split('\n').forEach(line=>{const i=line.indexOf('=');if(i<1)return;const k=line.slice(0,i).trim();if(k)nets[k]=line.slice(i+1).trim()});show('status',await jpost('/api/secrets',{gemini_api_key:geminiKey.value,gateway_token:gatewayToken.value,wifi_password:wifiPassword.value,wifi_networks:nets}));geminiKey.value='';gatewayToken.value='';wifiPassword.value='';wifiNetworkSecrets.value=''}
+async function saveSecrets(){const nets=[];wifiNetworkSecrets.value.split('\n').forEach(line=>{const i=line.indexOf('=');if(i<1)return;const k=line.slice(0,i).trim();if(k)nets.push({ssid:k,password:line.slice(i+1).trim()})});show('status',await jpost('/api/secrets',{gemini_api_key:geminiKey.value,gateway_token:gatewayToken.value,wifi_password:wifiPassword.value,wifi_networks:nets}));geminiKey.value='';gatewayToken.value='';wifiPassword.value='';wifiNetworkSecrets.value=''}
 async function saveWebPassword(){show('status',await jpost('/api/security',{web_password:webPassword.value}));webPassword.value=''}
 async function loadPrompts(){const p=await jget('/api/prompts');systemPrompt.value=p.system_prompt||'';personaPrompt.value=p.persona_prompt||''}
 async function savePrompts(){show('status',await jpost('/api/prompts',{system_prompt:systemPrompt.value,persona_prompt:personaPrompt.value}))}
@@ -503,6 +503,19 @@ void WebConfigServer::handleStatus() {
   sendJson(200, doc);
 }
 
+// SSIDs are not secret, only the passwords beside them are, so the list can be
+// reported while the values stay hidden.
+static void appendWifiSsids(JsonArray out, const String& raw) {
+  if (!raw.length()) return;
+  JsonDocument doc;
+  if (deserializeJson(doc, raw) != DeserializationError::Ok) return;
+  if (!doc.is<JsonArrayConst>()) return;
+  for (JsonVariantConst entry : doc.as<JsonArrayConst>()) {
+    const char* ssid = entry["ssid"] | "";
+    if (ssid && ssid[0]) out.add(ssid);
+  }
+}
+
 void WebConfigServer::handleRuntimeGet() {
   JsonDocument doc;
   doc["robot_id"] = config_.robotId;
@@ -515,8 +528,11 @@ void WebConfigServer::handleRuntimeGet() {
   doc["gateway_enabled"] = gateway_.isEnabled();
   doc["gateway_base_url"] = "";
   doc["wifi_ssid"] = "missing";
-  doc["wifi_networks"].to<JsonArray>();
   doc["wifi_roam_margin_db"] = 8;
+  // Networks live in secrets/wifi_networks.json, one entry per network, so
+  // that adding one means editing a single file.
+  appendWifiSsids(doc["wifi_networks"].to<JsonArray>(),
+                  readTextFile(kWifiNetworksSecretPath, 4096));
   doc["speaker_volume"] = 200;
   doc["mic_magnification"] = M5.Mic.config().magnification;
   doc["mic_noise_filter_level"] = M5.Mic.config().noise_filter_level;
@@ -551,9 +567,6 @@ void WebConfigServer::handleRuntimeGet() {
       doc["vad_turn_includes_all_input"] = cfg["vad_turn_includes_all_input"] | doc["vad_turn_includes_all_input"];
       const char* ssid = cfg["wifi_ssid"] | "";
       doc["wifi_ssid"] = (ssid && strlen(ssid) > 0) ? "set" : "missing";
-      // SSIDs are not secret, so the list is returned in full; only the
-      // passwords behind them stay hidden.
-      doc["wifi_networks"] = cfg["wifi_networks"];
       doc["wifi_roam_margin_db"] = cfg["wifi_roam_margin_db"] | 8;
     }
   }
@@ -625,17 +638,6 @@ void WebConfigServer::handleRuntimeSave() {
   cfg["vad_start_sensitivity_high"] = in["vad_start_sensitivity_high"] | (cfg["vad_start_sensitivity_high"] | gemini_.vadStartSensitivityHigh());
   cfg["vad_end_sensitivity_low"] = in["vad_end_sensitivity_low"] | (cfg["vad_end_sensitivity_low"] | gemini_.vadEndSensitivityLow());
   cfg["vad_turn_includes_all_input"] = in["vad_turn_includes_all_input"] | (cfg["vad_turn_includes_all_input"] | gemini_.vadTurnIncludesAllInput());
-  if (in["wifi_networks"].is<JsonArrayConst>()) {
-    // Replace wholesale: the editor always submits the complete list, and
-    // merging would make removing a network impossible.
-    auto networks = cfg["wifi_networks"].to<JsonArray>();
-    for (JsonVariantConst entry : in["wifi_networks"].as<JsonArrayConst>()) {
-      String value = entry.is<const char*>() ? String(entry.as<const char*>())
-                                             : String(entry["ssid"] | "");
-      value.trim();
-      if (value.length() && networks.size() < 8) networks.add(value);
-    }
-  }
   int roamMargin = in["wifi_roam_margin_db"] | (cfg["wifi_roam_margin_db"] | 8);
   if (roamMargin < 3) roamMargin = 3;
   if (roamMargin > 30) roamMargin = 30;
@@ -668,7 +670,8 @@ void WebConfigServer::handleRuntimeSave() {
   out["speaker_volume"] = cfg["speaker_volume"] | 200;
   out["mic_magnification"] = cfg["mic_magnification"] | 16;
   out["mic_noise_filter_level"] = cfg["mic_noise_filter_level"] | 1;
-  out["wifi_networks"] = cfg["wifi_networks"];
+  appendWifiSsids(out["wifi_networks"].to<JsonArray>(),
+                  readTextFile(kWifiNetworksSecretPath, 4096));
   out["wifi_roam_margin_db"] = cfg["wifi_roam_margin_db"] | 8;
   out["apply"]["wifi"] = "next_connect_or_reboot";
   out["vad_prefix_padding_ms"] = cfg["vad_prefix_padding_ms"] | 800;
@@ -772,18 +775,35 @@ void WebConfigServer::handleSecretSave() {
   // Per-network passwords, merged so that submitting one network does not
   // erase the others. An empty value removes that network's password.
   int wifiNetworksUpdated = 0;
-  if (in["wifi_networks"].is<JsonObjectConst>()) {
+  if (in["wifi_networks"].is<JsonArrayConst>()) {
+    // Each entry defines one network completely. Merged by ssid so submitting
+    // one network does not erase the others; an empty password removes it.
     JsonDocument stored;
     String rawNetworks = readTextFile(kWifiNetworksSecretPath, 4096);
     if (rawNetworks.length()) deserializeJson(stored, rawNetworks);
-    if (!stored.is<JsonObject>()) stored.to<JsonObject>();
-    for (JsonPairConst kv : in["wifi_networks"].as<JsonObjectConst>()) {
-      const char* value = kv.value().as<const char*>();
-      if (!kv.key().c_str() || !kv.key().c_str()[0]) continue;
-      if (value && value[0]) {
-        stored[kv.key()] = value;
-      } else {
-        stored.remove(kv.key());
+    if (!stored.is<JsonArray>()) stored.to<JsonArray>();
+    JsonArray networks = stored.as<JsonArray>();
+
+    for (JsonVariantConst entry : in["wifi_networks"].as<JsonArrayConst>()) {
+      String ssid = entry["ssid"] | "";
+      ssid.trim();
+      if (!ssid.length()) continue;
+      const char* password = entry["password"] | "";
+      const bool remove = !password || !password[0];
+
+      int existing = -1;
+      for (size_t i = 0; i < networks.size(); ++i) {
+        const char* seen = networks[i]["ssid"] | "";
+        if (seen && ssid == seen) { existing = static_cast<int>(i); break; }
+      }
+      if (remove) {
+        if (existing >= 0) networks.remove(existing);
+      } else if (existing >= 0) {
+        networks[existing]["password"] = password;
+      } else if (networks.size() < 8) {
+        auto added = networks.add<JsonObject>();
+        added["ssid"] = ssid;
+        added["password"] = password;
       }
       ++wifiNetworksUpdated;
     }

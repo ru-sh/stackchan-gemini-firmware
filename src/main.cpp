@@ -282,6 +282,14 @@ static bool startSetupAccessPoint(const ConfigManager& cfg) {
 
 void setup() {
   Serial.begin(115200);
+  // Serial here is USB CDC, not a UART. The core latches tx_timeout_ms to 100 ms
+  // the first time a host drains the buffer and never restores it when that host
+  // detaches, so afterwards every write blocks for up to 100 ms with nothing
+  // reading. With per-turn logging that starves the audio DAC and the speech
+  // audibly chops, and only while a serial monitor is attached does it sound
+  // right, which hides the fault exactly when anyone looks for it. Zero keeps
+  // writes non-blocking: logs are dropped when unread, which is the right trade.
+  Serial.setTxTimeoutMs(0);
   M5StackChan.begin();
   configureAudio();
   M5.Speaker.begin();

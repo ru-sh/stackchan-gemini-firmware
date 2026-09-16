@@ -352,6 +352,8 @@ void GeminiLiveProbe::streamAudioDeltaBase64(const String& b64) {
       audio_dropped_ = 0;
       audio_backpressure_wait_ms_ = 0;
       audio_underruns_ = 0;
+      audio_arrival_gaps_ = 0;
+      audio_arrival_gap_max_ms_ = 0;
       last_audio_rx_ms_ = 0;
       pending_head_ = 0;
       pending_count_ = 0;
@@ -365,17 +367,19 @@ void GeminiLiveProbe::streamAudioDeltaBase64(const String& b64) {
     // here rather than in loop() so a turn draining normally is not miscounted.
     const uint32_t now_rx = millis();
     const uint32_t arrival_gap = last_audio_rx_ms_ ? now_rx - last_audio_rx_ms_ : 0;
-    if (last_audio_rx_ms_ && M5.Speaker.isPlaying(1) == 0) {
+    // While prebuffering nothing has been handed to the speaker yet, so an idle
+    // channel is expected and counting it inflated every turn by one to three.
+    if (!prebuffering_ && last_audio_rx_ms_ && M5.Speaker.isPlaying(1) == 0) {
       ++audio_underruns_;
       Serial.printf("AudioUnderrun: n=%lu arrival_gap_ms=%lu chunk=%lu\n",
                     static_cast<unsigned long>(audio_underruns_),
                     static_cast<unsigned long>(arrival_gap),
                     static_cast<unsigned long>(audio_chunks_));
     } else if (arrival_gap >= AUDIO_ARRIVAL_REPORT_MS) {
-      Serial.printf("AudioArrivalGap: gap_ms=%lu queue=%d chunk=%lu\n",
-                    static_cast<unsigned long>(arrival_gap),
-                    M5.Speaker.isPlaying(1),
-                    static_cast<unsigned long>(audio_chunks_));
+      // Logging this per chunk was a line per ~200 ms of speech. Aggregate and
+      // report once per turn: serial writes compete with the audio path.
+      ++audio_arrival_gaps_;
+      if (arrival_gap > audio_arrival_gap_max_ms_) audio_arrival_gap_max_ms_ = arrival_gap;
     }
     last_audio_rx_ms_ = now_rx;
 
@@ -784,17 +788,25 @@ void GeminiLiveProbe::handleMessage(uint8_t* payload, size_t length) {
 void GeminiLiveProbe::completeResponseTurn() {
   turn_in_progress_ = false;
   interaction_pending_ms_ = 0;
-  Serial.printf("GeminiLive: turnGrounding used=%s sessionTurns=%lu\n",
-                grounding_used_this_turn_ ? "yes" : "no",
-                static_cast<unsigned long>(grounding_turns_));
-  grounding_used_this_turn_ = false;
+  if (!finishing_turn_ && grounding_used_this_turn_) {
+    Serial.printf("GeminiLive: turnGrounding used=yes sessionTurns=%lu\n",
+                  static_cast<unsigned long>(grounding_turns_));
+  }
+  if (!finishing_turn_) grounding_used_this_turn_ = false;
   flushOutputTranscript();
-  Serial.printf("GeminiLive: responseComplete chunks=%lu dropped=%lu wait_ms=%lu underruns=%lu peakPending=%d/%d\n",
-                static_cast<unsigned long>(audio_chunks_),
-                static_cast<unsigned long>(audio_dropped_),
-                static_cast<unsigned long>(audio_backpressure_wait_ms_),
-                static_cast<unsigned long>(audio_underruns_),
-                pending_peak_, AUDIO_PENDING_MAX);
+  // generationComplete and turnComplete arrive as separate frames and both end
+  // the turn, which logged this twice. Report once, when the turn really ends.
+  if (!finishing_turn_) {
+    Serial.printf("GeminiLive: responseComplete chunks=%lu dropped=%lu wait_ms=%lu underruns=%lu "
+                  "gaps=%lu/%lums peakPending=%d/%d\n",
+                  static_cast<unsigned long>(audio_chunks_),
+                  static_cast<unsigned long>(audio_dropped_),
+                  static_cast<unsigned long>(audio_backpressure_wait_ms_),
+                  static_cast<unsigned long>(audio_underruns_),
+                  static_cast<unsigned long>(audio_arrival_gaps_),
+                  static_cast<unsigned long>(audio_arrival_gap_max_ms_),
+                  pending_peak_, AUDIO_PENDING_MAX);
+  }
   if (speaking_) {
     // The tail can be many seconds of audio and drains only at realtime, so
     // waiting for it here blocked the websocket and, worse, gave up after a

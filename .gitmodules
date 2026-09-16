@@ -1,0 +1,3 @@
+[submodule "third_party/gemini-live-api-examples"]
+	path = third_party/gemini-live-api-examples
+	url = https://github.com/google-gemini/gemini-live-api-examples.git

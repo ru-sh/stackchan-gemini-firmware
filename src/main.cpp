@@ -346,6 +346,7 @@ void setup() {
           Serial.println("Gemini: configured lazy");
           gemini.setModel(cfg.geminiModel);
           gemini.setVoiceName(cfg.geminiVoice);
+          gemini.setSearchGrounding(cfg.geminiSearchGrounding);
           gemini.setVadConfig(cfg.vadPrefixPaddingMs, cfg.vadSilenceDurationMs,
                               cfg.vadStartSensitivityHigh, cfg.vadEndSensitivityLow,
                               cfg.vadTurnIncludesAllInput);

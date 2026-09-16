@@ -154,11 +154,15 @@ void GeminiLiveProbe::sendSetup() {
   automaticActivityDetection["silenceDurationMs"] = vad_silence_duration_ms_;
   realtimeInputConfig["turnCoverage"] =
       vad_turn_includes_all_input_ ? "TURN_INCLUDES_ALL_INPUT" : "TURN_INCLUDES_ONLY_ACTIVITY";
-  Serial.printf("GeminiLive: setup model=%s voice=%s vad_prefix=%u vad_silence=%u\n",
-                model_.c_str(), voice_name_.c_str(),
+  Serial.printf("GeminiLive: setup model=%s voice=%s search=%s vad_prefix=%u vad_silence=%u\n",
+                model_.c_str(), voice_name_.c_str(), search_grounding_ ? "on" : "off",
                 static_cast<unsigned>(vad_prefix_padding_ms_),
                 static_cast<unsigned>(vad_silence_duration_ms_));
   auto tools = setup["tools"].to<JsonArray>();
+  // Grounding with Google Search coexists with custom functions: the Live API
+  // takes several entries in one tools array. It is a separate entry, not a
+  // field on the functionDeclarations entry.
+  if (search_grounding_) tools.add<JsonObject>()["googleSearch"].to<JsonObject>();
   auto t0 = tools.add<JsonObject>();
   auto functionDeclarations = t0["functionDeclarations"].to<JsonArray>();
   if (tool_bridge_) {
@@ -170,7 +174,6 @@ void GeminiLiveProbe::sendSetup() {
       }
     }
   }
-  // Keep googleSearch disabled; external tools route through the LAN gateway.
   auto sys = setup["systemInstruction"].to<JsonObject>();
   sys["role"] = "user";
   String instruction =
@@ -189,6 +192,8 @@ void GeminiLiveProbe::sendSetup() {
       "Do not take multiple photos in the same sector, do not make a batch of photos, and do not say the target was not found until you have checked all search sectors. "
       "Use vertical up/down search only if the user explicitly asks or after the horizontal scan fails. "
       "Do not speak while the camera tool is running, and do not move the head while the camera tool itself is capturing. "
+      "Web search policy: you have Grounding with Google Search. Use it for current or verifiable facts you would otherwise guess at, such as news, weather, prices, schedules, opening hours, or anything after your training data. Prefer it over guessing, keep spoken answers short, and say when an answer came from a web search. "
+      "Search queries leave this device, so never put private values into one: no PINs, passwords, tokens, codes, addresses, phone numbers, or secrets, and no personal details from local memory. If answering would require searching such a value, answer locally instead or say you cannot. "
       "Memory policy: only the active post-compaction dialogue memory is provided below. It is authoritative for recent recall, but archived raw dialogues are not available to you at runtime. "
       "If the user asks whether you remember something, first use the provided active memory; if needed, call search_memory, which is limited to active memory only. "
       "If something was folded/summarized out of active context and is not explicitly present, say you do not have that detail in active memory rather than guessing. "

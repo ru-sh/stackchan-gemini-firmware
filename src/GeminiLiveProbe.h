@@ -56,6 +56,8 @@ class GeminiLiveProbe {
   bool vadTurnIncludesAllInput() const { return vad_turn_includes_all_input_; }
   void setModel(const String& model) { if (model.length()) model_ = model; }
   void setVoiceName(const String& voiceName) { if (voiceName.length()) voice_name_ = voiceName; }
+  void setSearchGrounding(bool enabled) { search_grounding_ = enabled; }
+  bool searchGrounding() const { return search_grounding_; }
   void setSystemPrompt(const String& systemPrompt) { system_prompt_ = systemPrompt; system_prompt_.trim(); }
   void setPersonaPrompt(const String& personaPrompt) { persona_prompt_ = personaPrompt; persona_prompt_.trim(); }
   void loop();
@@ -137,6 +139,7 @@ class GeminiLiveProbe {
   bool vad_start_sensitivity_high_ = true;
   bool vad_end_sensitivity_low_ = true;
   bool vad_turn_includes_all_input_ = true;
+  bool search_grounding_ = true;
   String api_key_storage_;
   String model_ = kDefaultModel;
   String voice_name_ = kDefaultVoice;

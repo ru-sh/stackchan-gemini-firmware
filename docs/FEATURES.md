@@ -5,6 +5,7 @@
 Available without a gateway, when Wi-Fi/Gemini are configured:
 
 - Gemini Live voice conversation.
+- Grounding with Google Search during the voice conversation (`gemini_search_grounding`, on by default).
 - Procedural face/emotions.
 - Touch/screen wake and voice toggle paths.
 - Camera capture smoke test and JPEG endpoint.

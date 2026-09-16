@@ -55,6 +55,7 @@ bool ConfigManager::loadJsonConfig(const char* path) {
       GeminiLiveProbe::upgradeLegacyModel(doc["gemini_model"] | config_.geminiModel);
   config_.geminiVoice =
       GeminiLiveProbe::supportedVoice(doc["gemini_voice"] | config_.geminiVoice);
+  config_.geminiSearchGrounding = doc["gemini_search_grounding"] | config_.geminiSearchGrounding;
   config_.gatewayBaseUrl = doc["gateway_base_url"] | config_.gatewayBaseUrl;
   config_.wifiSsid = doc["wifi_ssid"] | config_.wifiSsid;
   int vol = doc["speaker_volume"] | config_.speakerVolume;
@@ -135,6 +136,7 @@ String ConfigManager::redactedStatusJson() const {
   doc["gemini_enabled"] = config_.geminiEnabled;
   doc["gemini_model"] = config_.geminiModel;
   doc["gemini_voice"] = config_.geminiVoice;
+  doc["gemini_search_grounding"] = config_.geminiSearchGrounding;
   doc["gemini_api_key"] = hasGeminiApiKey() ? "set" : "missing";
   doc["gateway_enabled"] = config_.gatewayEnabled;
   doc["gateway_base_url"] = config_.gatewayBaseUrl;

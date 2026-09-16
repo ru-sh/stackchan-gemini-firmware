@@ -75,9 +75,16 @@ and enable Gemini in `runtime.json`:
 {
   "gemini_enabled": true,
   "gemini_model": "models/gemini-3.8-live",
-  "gemini_voice": "Puck"
+  "gemini_voice": "Puck",
+  "gemini_search_grounding": true
 }
 ```
+
+`gemini_search_grounding` turns on Grounding with Google Search, which the
+Live API runs alongside the robot's own tools rather than instead of them.
+It defaults to `true`; set it to `false` to keep the session offline apart
+from Gemini itself. Search queries leave the device, so the system prompt
+forbids putting private values or local-memory details into one.
 
 `gemini_model` written by older firmware (`models/gemini-3.1-flash-live-preview`)
 is upgraded to `models/gemini-3.8-live` when the config is read, so an existing

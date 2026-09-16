@@ -24,8 +24,10 @@ class GeminiLiveProbe {
   // Chunks were assumed to be ~19 KB from the prebuffer timings; the guard in
   // decodeBase64 caught one at 36.5 KB (760 ms), so 32 KB was too small and a
   // chunk was rejected mid-answer. 64 KB is about twice the largest measured.
-  // Buffer count is set from peakPending logging rather than another estimate.
-  static constexpr int AUDIO_RING_BUFFERS = 40;
+  // Buffer count comes from measurement, not estimate: peakPending reached 30
+  // of 37 on a 103-chunk answer with 5.4 MB of PSRAM still free, so 64 buffers
+  // (61 pending) is a ~2x margin costing headroom that nothing else needed.
+  static constexpr int AUDIO_RING_BUFFERS = 64;
   static constexpr size_t AUDIO_BUFFER_BYTES = 64 * 1024;
 
   // Live API model shipped as the default. Runtime configs written by older
@@ -160,6 +162,9 @@ class GeminiLiveProbe {
   // speaker queue is full, which means playback is healthy. The gap is the
   // opposite condition, the queue running dry with more audio still to come.
   uint32_t audio_underruns_ = 0;
+  // Arrival gaps are aggregated per turn rather than logged per chunk.
+  uint32_t audio_arrival_gaps_ = 0;
+  uint32_t audio_arrival_gap_max_ms_ = 0;
   uint32_t last_audio_rx_ms_ = 0;
   // Chunks decoded but not yet handed to the speaker, oldest first.
   int pending_buf_[AUDIO_RING_BUFFERS] = {0};

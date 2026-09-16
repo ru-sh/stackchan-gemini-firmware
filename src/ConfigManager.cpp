@@ -51,8 +51,10 @@ bool ConfigManager::loadJsonConfig(const char* path) {
   if (deserializeJson(doc, raw)) return false;
 
   config_.robotId = doc["robot_id"] | config_.robotId;
-  config_.geminiModel = doc["gemini_model"] | config_.geminiModel;
-  config_.geminiVoice = doc["gemini_voice"] | config_.geminiVoice;
+  config_.geminiModel =
+      GeminiLiveProbe::upgradeLegacyModel(doc["gemini_model"] | config_.geminiModel);
+  config_.geminiVoice =
+      GeminiLiveProbe::supportedVoice(doc["gemini_voice"] | config_.geminiVoice);
   config_.gatewayBaseUrl = doc["gateway_base_url"] | config_.gatewayBaseUrl;
   config_.wifiSsid = doc["wifi_ssid"] | config_.wifiSsid;
   int vol = doc["speaker_volume"] | config_.speakerVolume;

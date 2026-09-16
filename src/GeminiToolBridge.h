@@ -28,6 +28,9 @@ class GeminiToolBridge {
   void setMemoryStore(MemoryStore* memory) { memory_ = memory; }
 
   String functionDeclarationsJson();
+  // Scheduling hint the Live API requires on responses to tools declared
+  // NON_BLOCKING; nullptr for ordinary blocking tools.
+  static const char* nonBlockingScheduling(const String& name);
   String handleFunctionCall(const String& name, const JsonVariantConst& args,
                             const String& sessionId = "");
 

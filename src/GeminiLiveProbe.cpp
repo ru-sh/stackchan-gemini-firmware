@@ -76,6 +76,8 @@ void GeminiLiveProbe::disconnect(bool intentional, const char* finalEmotion) {
   connected_ = false;
   connect_requested_ = false;
   connect_started_ms_ = 0;
+  turn_in_progress_ = false;
+  interaction_pending_ms_ = 0;
   ws_.disconnect();
   if (emotion_) emotion_->setEmotion(intentional ? intentional_disconnect_emotion_.c_str() : "error");
 }
@@ -106,6 +108,12 @@ void GeminiLiveProbe::loop() {
       last_activity_ms_ && millis() - last_activity_ms_ > IDLE_DISCONNECT_MS) {
     Serial.println("GeminiLive: idle disconnect");
     disconnect(true, "sleep");
+  }
+  if (turn_in_progress_ && interaction_pending_ms_ &&
+      millis() - interaction_pending_ms_ > INTERACTION_STATUS_WATCHDOG_MS) {
+    Serial.println("GeminiLive: interaction status watchdog; completing held turn");
+    completeResponseTurn();
+    return;
   }
   if (end_session_requested_ && end_session_requested_ms_ &&
       millis() - end_session_requested_ms_ > END_SESSION_GRACE_MS) {
@@ -250,27 +258,26 @@ bool GeminiLiveProbe::requestTextTurn(const String& text) {
   return true;
 }
 
-bool GeminiLiveProbe::sendImageTurn(const String& imageBase64, const String& prompt) {
+bool GeminiLiveProbe::sendImageFrame(const String& imageBase64, const String& prompt) {
   if (!isReady()) return false;
   if (imageBase64.length() == 0) return false;
   last_activity_ms_ = millis();
   if (realtime_recording_) stopRealtimeRecord();
   if (emotion_) emotion_->setEmotion("looking");
 
-  String promptText = prompt.length() ? prompt : "Look at this snapshot from my camera and answer concisely in the user's language.";
-  promptText.replace("\\", "\\\\");
-  promptText.replace("\"", "\\\"");
-  promptText.replace("\n", "\\n");
-  promptText.replace("\r", "\\r");
+  (void)prompt;  // carried by the tool response, not by the frame
 
+  // The frame goes in as realtime media, not as a clientContent turn ending in
+  // turnComplete. A completed turn is its own generation trigger, so pairing it
+  // with the toolResponse that follows made the model answer the same question
+  // twice. As realtime input the frame is context only, and the toolResponse is
+  // the single trigger; the prompt text rides along in that response instead.
   String out;
-  out.reserve(imageBase64.length() + promptText.length() + 220);
-  out = "{\"clientContent\":{\"turns\":[{\"role\":\"user\",\"parts\":[{\"text\":\"";
-  out += promptText;
-  out += "\"},{\"inlineData\":{\"mimeType\":\"image/jpeg\",\"data\":\"";
+  out.reserve(imageBase64.length() + 120);
+  out = "{\"realtimeInput\":{\"video\":{\"data\":\"";
   out += imageBase64;
-  out += "\"}}]}],\"turnComplete\":true}}";
-  Serial.printf("GeminiLive: sending image turn b64=%u json=%u\n",
+  out += "\",\"mime_type\":\"image/jpeg\"}}}";
+  Serial.printf("GeminiLive: sending image frame b64=%u json=%u\n",
                 static_cast<unsigned>(imageBase64.length()), static_cast<unsigned>(out.length()));
   bool sent = ws_.sendTXT(out);
   return sent;
@@ -327,6 +334,10 @@ void GeminiLiveProbe::startRealtimeRecord() {
   }
   if (!realtime_recording_) {
     Serial.println("GeminiLive: start realtime recording");
+    // Listening again means the previous model turn is over regardless of what
+    // the last interaction status said.
+    turn_in_progress_ = false;
+    interaction_pending_ms_ = 0;
     mic_ready_for_speech_ = false;
     // Do not show the user-facing listening cue until at least one mic chunk
     // has been successfully captured and sent to Gemini.
@@ -535,6 +546,8 @@ void GeminiLiveProbe::wsEvent(WStype_t type, uint8_t* payload, size_t length) {
       self_->resume_conversation_after_text_ = false;
       self_->pending_text_ = "";
       self_->connect_requested_ = false;
+      self_->turn_in_progress_ = false;
+      self_->interaction_pending_ms_ = 0;
       if (self_->emotion_) self_->emotion_->setEmotion(should_sleep ? "sleep" : self_->intentional_disconnect_emotion_.c_str());
       break;
     }
@@ -549,6 +562,14 @@ void GeminiLiveProbe::handleMessage(uint8_t* payload, size_t length) {
   if (err) {
     Serial.printf("GeminiLive: json parse error=%s length=%u\n", err.c_str(), static_cast<unsigned>(length));
     return;
+  }
+
+  if (handleServerError(doc.as<JsonVariant>())) return;
+
+  JsonVariant goAway = doc["goAway"];
+  if (!goAway.isNull()) {
+    Serial.printf("GeminiLive: goAway timeLeft=%s\n",
+                  (const char*)(goAway["timeLeft"] | "unspecified"));
   }
 
   JsonVariant setupComplete = doc["setupComplete"];
@@ -574,42 +595,37 @@ void GeminiLiveProbe::handleMessage(uint8_t* payload, size_t length) {
   JsonVariant serverContent = doc["serverContent"];
   handleTranscription(serverContent);
 
+  // Accept both spellings and both nesting levels, matching the defensive
+  // parsing in the upstream raw-websocket sample.
+  const char* interactionStatus = serverContent["interactionStatus"];
+  if (!interactionStatus) interactionStatus = serverContent["interaction_status"];
+  if (!interactionStatus) interactionStatus = doc["interactionStatus"];
+  if (!interactionStatus) interactionStatus = doc["interaction_status"];
+  bool requiresAction = false;
+  if (interactionStatus && interactionStatus[0]) {
+    saw_interaction_status_ = true;
+    requiresAction = strstr(interactionStatus, "REQUIRES_ACTION") != nullptr;
+    turn_in_progress_ = !requiresAction;
+    interaction_pending_ms_ = requiresAction ? 0 : millis();
+    Serial.printf("GeminiLive: interactionStatus=%s\n", interactionStatus);
+  }
+
   // Support the field shape used by Gemini Live audio deltas.
   const char* data = doc["serverContent"]["modelTurn"]["parts"][0]["inlineData"]["data"];
   if (data && data[0]) streamAudioDeltaBase64(String(data));
 
-  bool responseComplete = !doc["serverContent"]["turnComplete"].isNull() ||
-                          !doc["serverContent"]["generationComplete"].isNull();
-  if (responseComplete) {
-    flushOutputTranscript();
-    Serial.printf("GeminiLive: responseComplete chunks=%lu dropped=%lu wait_ms=%lu\n",
-                  static_cast<unsigned long>(audio_chunks_),
-                  static_cast<unsigned long>(audio_dropped_),
-                  static_cast<unsigned long>(audio_backpressure_wait_ms_));
-    if (speaking_) {
-      speaking_ = false;
-      while (M5.Speaker.isPlaying()) { delay(1); }
-      M5.Speaker.end();
-      M5.Speaker.begin();
-      M5.Speaker.setVolume(speaker_volume_);
-      M5.Speaker.setAllChannelVolume(speaker_volume_);
-    }
-    if (end_session_requested_) {
-      end_session_requested_ = false;
-      end_session_requested_ms_ = 0;
-      if (emotion_) emotion_->setEmotion("sleep");
-      Serial.println("Status: sleeping...");
-      disconnect(true, "sleep");
-    } else if (continuous_conversation_ && isReady()) {
-      resume_conversation_after_text_ = false;
-      Serial.println("Status: listening...");
-      startRealtimeRecord();
-    } else {
-      resume_conversation_after_text_ = false;
-      if (emotion_) emotion_->setEmotion("neutral");
-      Serial.println("Status: Tap to talk");
-    }
+  // A turn signal alone is not conclusive on models that reason in the
+  // background: turnComplete can arrive while more audio, transcripts or tool
+  // calls are still on the way. Once the server has sent an interaction
+  // status, REQUIRES_ACTION is what actually ends the turn; until then the
+  // firmware keeps its original turnComplete behaviour.
+  bool turnSignal = !doc["serverContent"]["turnComplete"].isNull() ||
+                    !doc["serverContent"]["generationComplete"].isNull();
+  if (turnSignal) flushOutputTranscript();
+  if (turnSignal && turn_in_progress_) {
+    Serial.println("GeminiLive: turnComplete held; interaction status IN_PROGRESS");
   }
+  if (requiresAction || (turnSignal && !turn_in_progress_)) completeResponseTurn();
 
   JsonArray functionCalls = doc["toolCall"]["functionCalls"].as<JsonArray>();
   if (!functionCalls.isNull() && tool_bridge_) {
@@ -647,11 +663,68 @@ void GeminiLiveProbe::handleMessage(uint8_t* payload, size_t length) {
       } else {
         fr["response"]["text"] = result;
       }
+      // Tools declared NON_BLOCKING must say how their late result should be
+      // delivered, otherwise the model has no way to schedule it.
+      const char* scheduling = GeminiToolBridge::nonBlockingScheduling(toolName);
+      if (scheduling && fr["response"].is<JsonObject>()) {
+        fr["response"]["scheduling"] = scheduling;
+      }
     }
     String out;
     serializeJson(responseDoc, out);
     ws_.sendTXT(out);
   }
+}
+
+void GeminiLiveProbe::completeResponseTurn() {
+  turn_in_progress_ = false;
+  interaction_pending_ms_ = 0;
+  flushOutputTranscript();
+  Serial.printf("GeminiLive: responseComplete chunks=%lu dropped=%lu wait_ms=%lu\n",
+                static_cast<unsigned long>(audio_chunks_),
+                static_cast<unsigned long>(audio_dropped_),
+                static_cast<unsigned long>(audio_backpressure_wait_ms_));
+  if (speaking_) {
+    speaking_ = false;
+    while (M5.Speaker.isPlaying()) { delay(1); }
+    M5.Speaker.end();
+    M5.Speaker.begin();
+    M5.Speaker.setVolume(speaker_volume_);
+    M5.Speaker.setAllChannelVolume(speaker_volume_);
+  }
+  if (end_session_requested_) {
+    end_session_requested_ = false;
+    end_session_requested_ms_ = 0;
+    if (emotion_) emotion_->setEmotion("sleep");
+    Serial.println("Status: sleeping...");
+    disconnect(true, "sleep");
+  } else if (continuous_conversation_ && isReady()) {
+    resume_conversation_after_text_ = false;
+    Serial.println("Status: listening...");
+    startRealtimeRecord();
+  } else {
+    resume_conversation_after_text_ = false;
+    if (emotion_) emotion_->setEmotion("neutral");
+    Serial.println("Status: Tap to talk");
+  }
+}
+
+// Returns true when the frame was an error and the session was torn down.
+bool GeminiLiveProbe::handleServerError(JsonVariant doc) {
+  JsonVariant error = doc["error"];
+  if (error.isNull()) return false;
+  int code = error["code"] | 0;
+  const char* status = error["status"] | "";
+  const char* message = error["message"] | "unknown";
+  Serial.printf("GeminiLive: server error code=%d status=%s message=%s\n", code, status, message);
+  if (!setup_complete_) {
+    // Almost always a rejected setup field: an unknown model id, or a voice
+    // the configured model does not offer.
+    Serial.printf("GeminiLive: setup rejected with model=%s voice=%s\n",
+                  model_.c_str(), voice_name_.c_str());
+  }
+  disconnect(true, "error");
+  return true;
 }
 
 void GeminiLiveProbe::handleTranscription(JsonVariant serverContent) {

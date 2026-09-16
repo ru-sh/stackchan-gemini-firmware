@@ -4,7 +4,7 @@
   "wifi_ssid": "YOUR_WIFI_SSID",
   "web_enabled": true,
   "gemini_enabled": true,
-  "gemini_model": "models/gemini-3.1-flash-live-preview",
+  "gemini_model": "models/gemini-3.8-live",
   "gemini_voice": "Puck",
   "gateway_enabled": false,
   "gateway_base_url": "",

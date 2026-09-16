@@ -4,6 +4,14 @@
 #include <M5Unified.h>
 #include <M5StackChan.h>
 
+const char* GeminiToolBridge::nonBlockingScheduling(const String& name) {
+  // Only tools that return their actual answer in the function response belong
+  // here: the hint tells the API to surface that response as its own event.
+  // WHEN_IDLE lets a slow gateway answer wait for a natural pause.
+  if (name == "ask_hermes") return "WHEN_IDLE";
+  return nullptr;
+}
+
 String GeminiToolBridge::functionDeclarationsJson() {
   // Keep tool declarations deterministic: do not block Gemini setup on a LAN
   // /tools fetch. Local robot tools are handled here; gateway tools still go
@@ -85,6 +93,9 @@ String GeminiToolBridge::functionDeclarationsJson() {
   ahProps["urgency"]["type"] = "string";
   ahProps["urgency"]["description"] = "low, normal, or high.";
   ahParams["required"].add("question");
+  // Gateway round-trips are slow; let the model keep talking while it waits and
+  // deliver the answer when it lands rather than stalling the turn.
+  askHermes["behavior"] = "NON_BLOCKING";
 
   auto setEmotion = arr.add<JsonObject>();
   setEmotion["name"] = "set_emotion";
@@ -140,6 +151,9 @@ String GeminiToolBridge::functionDeclarationsJson() {
   auto lcProps = lcParams["properties"].to<JsonObject>();
   lcProps["question"]["type"] = "string";
   lcProps["question"]["description"] = "Short visual question, e.g. 'what is in front of me?' or 'what is on the table?'";
+  // Deliberately left blocking. The function response is what makes the model
+  // describe the frame sent by sendImageFrame(), so it has to land in the same
+  // turn; NON_BLOCKING would let the model talk past it.
 
   auto endSession = arr.add<JsonObject>();
   endSession["name"] = "end_session";
@@ -382,7 +396,7 @@ GeminiToolBridge::LocalStatus GeminiToolBridge::handleLocal(
     }
     String prompt = "This is one frame from my StackChan camera. Answer concisely and practically in the user's language. User question: ";
     prompt += question;
-    bool sent = gemini_->sendImageTurn(imageBase64, prompt);
+    bool sent = gemini_->sendImageFrame(imageBase64, prompt);
     // The bright white looking LEDs are useful only while the camera is actively
     // capturing/sending. Once the still image is handed to Gemini Live, switch
     // to thinking so the white assist light cannot stick through the later
@@ -392,7 +406,13 @@ GeminiToolBridge::LocalStatus GeminiToolBridge::handleLocal(
     response["image_sent_to_current_gemini_session"] = sent;
     response["jpeg_bytes"] = camera_.lastJpegBytes();
     response["base64_bytes"] = camera_.lastBase64Bytes();
-    response["message"] = sent ? "Snapshot was sent to the current Gemini Live conversation for visual analysis." : "Failed to send snapshot into Gemini Live.";
+    // This response is the only thing that triggers generation now, so it has
+    // to carry the instruction the image frame used to arrive with.
+    response["question"] = question;
+    response["message"] = sent
+        ? "One camera frame was just sent into this session as realtime video input. "
+          "Describe what is visible in it and answer the user's question concisely, in the user's language."
+        : "Failed to send snapshot into Gemini Live.";
     return sent ? LocalStatus::Handled : LocalStatus::Error;
   }
 

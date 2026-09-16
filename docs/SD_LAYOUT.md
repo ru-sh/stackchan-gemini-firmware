@@ -16,6 +16,7 @@ The firmware stores mutable runtime state on the SD card under `/app/StackChan/`
   secrets/
     gemini_api_key.txt
     wifi_password.txt
+    wifi_networks.json
     gateway_token.txt
     web_password_sha256.txt
     meta.jsonl
@@ -58,6 +59,43 @@ Example `wifi_password.txt`:
 ```text
 YOUR_WIFI_PASSWORD
 ```
+
+## Multiple Wi-Fi networks
+
+List every network the robot may join in `wifi_networks`. At connect time it
+scans and joins whichever of them is strongest, so the same SD card works in
+more than one place without being edited.
+
+```json
+{
+  "wifi_ssid": "YOUR_WIFI_SSID",
+  "wifi_networks": ["YOUR_WIFI_SSID", "YOUR_SECOND_WIFI_SSID"],
+  "wifi_roam_margin_db": 8
+}
+```
+
+`wifi_ssid` remains the primary network and is always included, so a card
+written before this feature keeps working with no changes.
+
+Passwords stay out of `runtime.json`. The primary network continues to use
+`wifi_password.txt`; every other network takes its password from
+`wifi_networks.json`, keyed by SSID:
+
+```json
+{
+  "YOUR_SECOND_WIFI_SSID": "SECOND_WIFI_PASSWORD"
+}
+```
+
+A network with no password is skipped rather than attempted.
+
+After connecting, the robot re-checks roughly every two minutes and moves only
+when another configured network is stronger by at least `wifi_roam_margin_db`
+(default 8, clamped to 3-30). The margin is what stops two overlapping routers
+trading the connection back and forth as signals waver. Because a scan briefly
+interrupts traffic, it runs only while no Gemini session is active, so a
+conversation is never cut short to look for a better router. A dropped link is
+reconnected regardless of that, after a short grace period.
 
 Boot the robot. If station Wi-Fi connects, read the IP from serial logs and open `http://ROBOT_IP/`. If credentials are missing or connection fails, join the open `<robot_id>-setup` access point and open `http://192.168.4.1/`. The Web UI can save Wi-Fi SSID/password and other settings; reboot after saving network changes.
 

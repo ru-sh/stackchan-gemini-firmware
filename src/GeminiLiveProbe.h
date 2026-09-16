@@ -186,9 +186,9 @@ class GeminiLiveProbe {
   uint8_t speaker_volume_ = 200;
   uint16_t vad_prefix_padding_ms_ = 800;
   uint16_t vad_silence_duration_ms_ = 900;
-  bool vad_start_sensitivity_high_ = true;
+  bool vad_start_sensitivity_high_ = false;
   bool vad_end_sensitivity_low_ = true;
-  bool vad_turn_includes_all_input_ = true;
+  bool vad_turn_includes_all_input_ = false;
   bool search_grounding_ = true;
   // Search runs server-side, so these only record what the metadata reported.
   bool grounding_used_this_turn_ = false;

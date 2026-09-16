@@ -151,7 +151,7 @@ static void playWakeDroidChirp() {
   M5.Speaker.setAllChannelVolume(savedVolume);
 }
 
-static void configureAudio(uint8_t micMagnification = 16, uint8_t micNoiseFilterLevel = 0) {
+static void configureAudio(uint8_t micMagnification = 16, uint8_t micNoiseFilterLevel = 1) {
   auto mic = M5.Mic.config();
   mic.sample_rate = 16000;
   // CoreS3/M5Unified software input gain. Default is 16. Keep conservative:

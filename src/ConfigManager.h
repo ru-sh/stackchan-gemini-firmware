@@ -24,12 +24,12 @@ class ConfigManager {
     String wifiSsid;
     uint8_t speakerVolume = 200;
     uint8_t micMagnification = 16;
-    uint8_t micNoiseFilterLevel = 0;
+    uint8_t micNoiseFilterLevel = 1;
     uint16_t vadPrefixPaddingMs = 800;
     uint16_t vadSilenceDurationMs = 900;
-    bool vadStartSensitivityHigh = true;
+    bool vadStartSensitivityHigh = false;
     bool vadEndSensitivityLow = true;
-    bool vadTurnIncludesAllInput = true;
+    bool vadTurnIncludesAllInput = false;
     String systemPrompt;
     String personaPrompt;
   };

@@ -15,6 +15,7 @@ class ConfigManager {
     String robotId = "stackchan";
     String geminiModel = GeminiLiveProbe::kDefaultModel;
     String geminiVoice = GeminiLiveProbe::kDefaultVoice;
+    bool geminiSearchGrounding = true;
     bool wifiEnabled = false;
     bool geminiEnabled = false;
     bool gatewayEnabled = false;

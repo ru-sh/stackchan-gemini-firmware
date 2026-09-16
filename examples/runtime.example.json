@@ -11,10 +11,10 @@
   "gateway_base_url": "",
   "speaker_volume": 200,
   "mic_magnification": 16,
-  "mic_noise_filter_level": 0,
+  "mic_noise_filter_level": 1,
   "vad_prefix_padding_ms": 800,
   "vad_silence_duration_ms": 900,
-  "vad_start_sensitivity_high": true,
+  "vad_start_sensitivity_high": false,
   "vad_end_sensitivity_low": true,
-  "vad_turn_includes_all_input": true
+  "vad_turn_includes_all_input": false
 }

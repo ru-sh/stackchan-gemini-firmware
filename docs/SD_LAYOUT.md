@@ -16,6 +16,7 @@ The firmware stores mutable runtime state on the SD card under `/app/StackChan/`
   secrets/
     gemini_api_key.txt
     wifi_password.txt
+    wifi_networks.json
     gateway_token.txt
     web_password_sha256.txt
     meta.jsonl
@@ -59,66 +60,45 @@ Example `wifi_password.txt`:
 YOUR_WIFI_PASSWORD
 ```
 
-Boot the robot. If station Wi-Fi connects, read the IP from serial logs and open `http://ROBOT_IP/`. If credentials are missing or connection fails, join the open `<robot_id>-setup` access point and open `http://192.168.4.1/`. The Web UI can save Wi-Fi SSID/password and other settings; reboot after saving network changes.
+## Multiple Wi-Fi networks
 
-## Gemini setup
+Every network the robot may join is defined in
+`secrets/wifi_networks.json`, one entry per network carrying both the SSID and
+its password, so adding a network means editing one file:
 
-Add:
-
-```text
-/app/StackChan/secrets/gemini_api_key.txt
+```json
+[
+  {"ssid": "HOME", "password": "HOME_PASSWORD"},
+  {"ssid": "OFFICE", "password": "OFFICE_PASSWORD"}
+]
 ```
 
-and enable Gemini in `runtime.json`:
+At connect time the robot scans and joins whichever of them is strongest, so
+the same card works in more than one place without being edited.
+
+Up to 8 networks. An entry with an empty password is skipped rather than
+attempted. No SSID or password is ever written to the logs, and the API
+reports SSIDs only, never the passwords beside them.
+
+`runtime.json` holds no passwords and no network list, only the roam margin:
 
 ```json
 {
-  "gemini_enabled": true,
-  "gemini_model": "models/gemini-3.8-live",
-  "gemini_voice": "Puck",
-  "gemini_search_grounding": true
+  "wifi_roam_margin_db": 8
 }
 ```
 
-`gemini_search_grounding` turns on Grounding with Google Search, which the
-Live API runs alongside the robot's own tools rather than instead of them.
-It defaults to `true`; set it to `false` to keep the session offline apart
-from Gemini itself. Search queries leave the device, so the system prompt
-forbids putting private values or local-memory details into one.
+After connecting, the robot re-checks roughly every two minutes and moves only
+when another configured network is stronger by at least `wifi_roam_margin_db`
+(default 8, clamped to 3-30). The margin is what stops two overlapping routers
+trading the connection back and forth as signals waver. Because a scan briefly
+interrupts traffic, it runs only while no Gemini session is active, so a
+conversation is never cut short to look for a better router. A dropped link is
+reconnected regardless of that, after a short grace period.
 
-`gemini_model` written by older firmware (`models/gemini-3.1-flash-live-preview`)
-is upgraded to `models/gemini-3.8-live` when the config is read, so an existing
-SD card needs no manual edit. Any other value you set is left untouched.
+### Cards written before this
 
-`gemini_voice` accepts the prebuilt voices this model offers: `Puck`, `Charon`,
-`Kore`, `Fenrir`, `Aoede`. Anything else falls back to `Puck` instead of being
-rejected by the API at session setup.
-
-You can also edit prompts:
-
-```text
-/app/StackChan/prompts/system.txt
-/app/StackChan/prompts/persona.txt
-```
-
-## Optional gateway setup
-
-Gateway integration is optional. Add `/app/StackChan/config/gateway.json` or set the equivalent fields in `runtime.json`:
-
-```json
-{
-  "gateway_enabled": true,
-  "gateway_base_url": "http://YOUR_GATEWAY_HOST:8811/stackchan",
-  "robot_id": "stackchan"
-}
-```
-
-If the gateway requires a token, store it in:
-
-```text
-/app/StackChan/secrets/gateway_token.txt
-```
-
-## Secrets policy
-
-Never commit real files from `/app/StackChan/secrets/` or private runtime SD dumps. The Web/API status endpoints redact secret values as `set` or `missing`.
+`wifi_ssid` in `runtime.json` and `secrets/wifi_password.txt` still work and
+need no migration. That SSID is always included as the primary network, and
+its password is read from `wifi_password.txt` when the SSID is absent from
+`wifi_networks.json`. New setups should use `wifi_networks.json` alone.

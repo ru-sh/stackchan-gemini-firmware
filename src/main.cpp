@@ -13,6 +13,7 @@
 #include "EmotionController.h"
 #include "ServoGestureController.h"
 #include "CameraCapture.h"
+#include "WifiManager.h"
 
 GeminiLiveProbe gemini;
 MemoryStore memory(SD);
@@ -23,6 +24,7 @@ CameraCapture camera;
 GeminiToolBridge toolBridge(toolGateway, emotion, servoGestures, camera);
 WebConfigServer webConfig(SD, memory, toolGateway, emotion, servoGestures, gemini, camera);
 ConfigManager configManager(SD);
+WifiManager wifiManager;
 volatile bool g_voice_toggle_requested = false;
 static uint8_t g_speaker_volume = 200;
 static constexpr uint32_t kBootNeutralSleepMs = 45000;
@@ -201,46 +203,11 @@ static void blackoutExternalLightsForPowerOff() {
   M5StackChan.showRgbColor(0, 0, 0);
 }
 
-static bool connectWifiFromConfig(const ConfigManager& cfg) {
-  const auto& c = cfg.config();
-  if (!c.wifiEnabled) {
-    Serial.println("WiFi: disabled");
-    return false;
-  }
-  String password = cfg.readWifiPassword();
-  if (!c.wifiSsid.length() || !password.length()) {
-    Serial.println("WiFi: missing ssid or password");
-    return false;
-  }
-  Serial.println("WiFi: starting station mode");
-  WiFi.mode(WIFI_STA);
-  WiFi.setSleep(false);
-  // DHCP on some routers/boots can leave DNS unusable even though the ESP is
-  // reachable on the LAN. Gemini Live connect then fails at hostByName() and
-  // the robot drops into error before audio starts. Keep DHCP addressing, but
-  // pin reliable resolvers for outbound Gemini/gateway connections.
-  WiFi.config(INADDR_NONE, INADDR_NONE, INADDR_NONE,
-              IPAddress(1, 1, 1, 1), IPAddress(8, 8, 8, 8));
-  WiFi.begin(c.wifiSsid.c_str(), password.c_str());
-  uint32_t start = millis();
-  while (WiFi.status() != WL_CONNECTED && millis() - start < 15000) {
-    delay(250);
-    M5StackChan.update();
-  }
-  if (WiFi.status() == WL_CONNECTED) {
-    WiFi.config(WiFi.localIP(), WiFi.gatewayIP(), WiFi.subnetMask(),
-                IPAddress(1, 1, 1, 1), IPAddress(8, 8, 8, 8));
-    Serial.print("WiFi: connected ip=");
-    Serial.print(WiFi.localIP());
-    Serial.print(" dns=");
-    Serial.println(WiFi.dnsIP());
-    drawStatus(WiFi.localIP().toString().c_str());
-    return true;
-  }
-  Serial.println("WiFi: connect timeout");
-  WiFi.disconnect(true, false);
-  WiFi.mode(WIFI_OFF);
-  return false;
+static bool connectWifiFromConfig(ConfigManager& cfg) {
+  // Network choice, reconnect and roaming now live in WifiManager. This stays
+  // as the single boot-time entry point the setup flow already expects.
+  if (!wifiManager.begin(&cfg)) return false;
+  return wifiManager.connectBest();
 }
 
 static bool shouldStartSetupAccessPoint(const ConfigManager& cfg, bool sdConfigExists) {
@@ -419,6 +386,9 @@ void loop() {
   // Audio underruns whenever one iteration blocks for longer than the speaker
   // has buffered, so time each subsystem and name the offender when it does.
   // Reported only above the threshold, so a healthy loop stays silent.
+  // Roaming must not interrupt a conversation, so anything from connecting to
+  // speaking counts as busy and defers the scan.
+  wifiManager.loop(gemini.isReady() || gemini.isSpeaking() || gemini.isRecording());
   const uint32_t stall_t0 = millis();
   gemini.loop();
   const uint32_t stall_t1 = millis();

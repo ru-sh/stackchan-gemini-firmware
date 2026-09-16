@@ -11,6 +11,10 @@ constexpr const char* kPersonaPromptPath = "/app/StackChan/prompts/persona.txt";
 constexpr const char* kGeminiKeyPath = "/app/StackChan/secrets/gemini_api_key.txt";
 constexpr const char* kGatewayTokenPath = "/app/StackChan/secrets/gateway_token.txt";
 constexpr const char* kWifiPasswordPath = "/app/StackChan/secrets/wifi_password.txt";
+// Per-network passwords, {"ssid": "password"}. The single-network file above is
+// still honoured for the primary ssid so existing cards keep working untouched.
+constexpr const char* kWifiNetworksSecretPath = "/app/StackChan/secrets/wifi_networks.json";
+constexpr size_t kMaxWifiNetworks = 8;
 }
 
 ConfigManager::ConfigManager(fs::FS& fs) : fs_(fs) {}
@@ -31,6 +35,7 @@ bool ConfigManager::load() {
     // gateway.json is optional; web UI may create it later.
   }
   loadPrompts();
+  loadWifiNetworks();
   ready_ = true;
   return true;
 }
@@ -58,6 +63,12 @@ bool ConfigManager::loadJsonConfig(const char* path) {
   config_.geminiSearchGrounding = doc["gemini_search_grounding"] | config_.geminiSearchGrounding;
   config_.gatewayBaseUrl = doc["gateway_base_url"] | config_.gatewayBaseUrl;
   config_.wifiSsid = doc["wifi_ssid"] | config_.wifiSsid;
+  int roamMargin = doc["wifi_roam_margin_db"] | config_.wifiRoamMarginDb;
+  // Below ~3 dB the margin is inside normal signal jitter and stops preventing
+  // flapping; above ~30 dB nothing would ever clear it.
+  if (roamMargin < 3) roamMargin = 3;
+  if (roamMargin > 30) roamMargin = 30;
+  config_.wifiRoamMarginDb = static_cast<uint8_t>(roamMargin);
   int vol = doc["speaker_volume"] | config_.speakerVolume;
   if (vol < 0) vol = 0;
   if (vol > 255) vol = 255;
@@ -108,6 +119,72 @@ String ConfigManager::readGeminiApiKey() const { return readTextFile(kGeminiKeyP
 String ConfigManager::readGatewayToken() const { return readTextFile(kGatewayTokenPath, 2048); }
 String ConfigManager::readWifiPassword() const { return readTextFile(kWifiPasswordPath, 2048); }
 
+bool ConfigManager::loadWifiNetworks() {
+  config_.wifiSsids.clear();
+  // The primary ssid from runtime.json stays first, so a card written before
+  // multi-network support keeps its exact behaviour with no secrets file.
+  if (config_.wifiSsid.length()) config_.wifiSsids.push_back(config_.wifiSsid);
+
+  String raw = readTextFile(kWifiNetworksSecretPath, 4096);
+  if (!raw.length()) return !config_.wifiSsids.empty();
+  JsonDocument doc;
+  if (deserializeJson(doc, raw) != DeserializationError::Ok) {
+    Serial.println("WiFi: wifi_networks.json is not valid JSON; ignoring it");
+    return !config_.wifiSsids.empty();
+  }
+  if (!doc.is<JsonArrayConst>()) {
+    Serial.println("WiFi: wifi_networks.json must be an array of {ssid, password}");
+    return !config_.wifiSsids.empty();
+  }
+
+  for (JsonVariantConst entry : doc.as<JsonArrayConst>()) {
+    if (config_.wifiSsids.size() >= kMaxWifiNetworks) break;
+    String ssid = entry["ssid"] | "";
+    ssid.trim();
+    if (!ssid.length()) continue;
+    bool duplicate = false;
+    for (const String& seen : config_.wifiSsids) {
+      if (seen == ssid) { duplicate = true; break; }
+    }
+    if (!duplicate) config_.wifiSsids.push_back(ssid);
+  }
+  return !config_.wifiSsids.empty();
+}
+
+String ConfigManager::readWifiPasswordFor(const String& ssid) const {
+  if (!ssid.length()) return String();
+  String raw = readTextFile(kWifiNetworksSecretPath, 4096);
+  if (raw.length()) {
+    JsonDocument doc;
+    if (deserializeJson(doc, raw) == DeserializationError::Ok && doc.is<JsonArrayConst>()) {
+      for (JsonVariantConst entry : doc.as<JsonArrayConst>()) {
+        const char* entrySsid = entry["ssid"] | "";
+        if (!entrySsid || ssid != entrySsid) continue;
+        const char* password = entry["password"] | "";
+        if (password && password[0]) return String(password);
+        // Named with an empty password: deliberately unusable, not a lookup miss.
+        return String();
+      }
+    }
+  }
+  // wifi_password.txt is the single-network format from before this file
+  // existed, and only ever belonged to the primary ssid.
+  if (ssid == config_.wifiSsid) return readWifiPassword();
+  return String();
+}
+
+bool ConfigManager::hasWifiPasswordFor(const String& ssid) const {
+  return readWifiPasswordFor(ssid).length() > 0;
+}
+
+std::vector<String> ConfigManager::configuredWifiSsids() const {
+  std::vector<String> usable;
+  for (const String& ssid : config_.wifiSsids) {
+    if (hasWifiPasswordFor(ssid)) usable.push_back(ssid);
+  }
+  return usable;
+}
+
 ToolGatewayClient::Config ConfigManager::gatewayConfig() const {
   ToolGatewayClient::Config cfg;
   cfg.enabled = config_.gatewayEnabled;
@@ -133,6 +210,9 @@ String ConfigManager::redactedStatusJson() const {
   doc["wifi_enabled"] = config_.wifiEnabled;
   doc["wifi_ssid"] = config_.wifiSsid.length() ? "set" : "missing";
   doc["wifi_password"] = hasWifiPassword() ? "set" : "missing";
+  doc["wifi_networks"] = config_.wifiSsids.size();
+  doc["wifi_networks_usable"] = configuredWifiSsids().size();
+  doc["wifi_roam_margin_db"] = config_.wifiRoamMarginDb;
   doc["gemini_enabled"] = config_.geminiEnabled;
   doc["gemini_model"] = config_.geminiModel;
   doc["gemini_voice"] = config_.geminiVoice;

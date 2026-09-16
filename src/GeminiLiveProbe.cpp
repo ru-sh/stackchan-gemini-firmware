@@ -258,27 +258,26 @@ bool GeminiLiveProbe::requestTextTurn(const String& text) {
   return true;
 }
 
-bool GeminiLiveProbe::sendImageTurn(const String& imageBase64, const String& prompt) {
+bool GeminiLiveProbe::sendImageFrame(const String& imageBase64, const String& prompt) {
   if (!isReady()) return false;
   if (imageBase64.length() == 0) return false;
   last_activity_ms_ = millis();
   if (realtime_recording_) stopRealtimeRecord();
   if (emotion_) emotion_->setEmotion("looking");
 
-  String promptText = prompt.length() ? prompt : "Look at this snapshot from my camera and answer concisely in the user's language.";
-  promptText.replace("\\", "\\\\");
-  promptText.replace("\"", "\\\"");
-  promptText.replace("\n", "\\n");
-  promptText.replace("\r", "\\r");
+  (void)prompt;  // carried by the tool response, not by the frame
 
+  // The frame goes in as realtime media, not as a clientContent turn ending in
+  // turnComplete. A completed turn is its own generation trigger, so pairing it
+  // with the toolResponse that follows made the model answer the same question
+  // twice. As realtime input the frame is context only, and the toolResponse is
+  // the single trigger; the prompt text rides along in that response instead.
   String out;
-  out.reserve(imageBase64.length() + promptText.length() + 220);
-  out = "{\"clientContent\":{\"turns\":[{\"role\":\"user\",\"parts\":[{\"text\":\"";
-  out += promptText;
-  out += "\"},{\"inlineData\":{\"mimeType\":\"image/jpeg\",\"data\":\"";
+  out.reserve(imageBase64.length() + 120);
+  out = "{\"realtimeInput\":{\"video\":{\"data\":\"";
   out += imageBase64;
-  out += "\"}}]}],\"turnComplete\":true}}";
-  Serial.printf("GeminiLive: sending image turn b64=%u json=%u\n",
+  out += "\",\"mime_type\":\"image/jpeg\"}}}";
+  Serial.printf("GeminiLive: sending image frame b64=%u json=%u\n",
                 static_cast<unsigned>(imageBase64.length()), static_cast<unsigned>(out.length()));
   bool sent = ws_.sendTXT(out);
   return sent;

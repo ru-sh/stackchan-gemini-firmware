@@ -62,7 +62,7 @@ class GeminiLiveProbe {
   void sendSetup();
   void sendTextTurn(const String& text);
   bool requestTextTurn(const String& text);
-  bool sendImageTurn(const String& imageBase64, const String& prompt);
+  bool sendImageFrame(const String& imageBase64, const String& prompt);
   void streamAudioDeltaBase64(const String& b64);
   bool isReady() const { return connected_ && setup_complete_; }
   bool isRecording() const { return realtime_recording_; }

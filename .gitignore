@@ -22,3 +22,6 @@ secrets/
 # Local/editor files
 .vscode/
 .DS_Store
+
+# Generated from src/web/ by scripts/embed_web.py at build time.
+/src/generated/

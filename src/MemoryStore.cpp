@@ -11,6 +11,31 @@ bool MemoryStore::begin() {
   return begin(policy);
 }
 
+namespace {
+// 2023-11-14. Anything earlier means the clock was never set: the ESP32 starts
+// its epoch in 1970 and getLocalTime has its own, looser, threshold.
+constexpr time_t kClockSanityEpoch = 1700000000;
+}  // namespace
+
+bool MemoryStore::adoptClock() {
+  if (_todayKey != "undated") return false;
+  struct tm timeInfo;
+  if (!getLocalTime(&timeInfo, 10)) return false;
+
+  char day[16];
+  char session[32];
+  strftime(day, sizeof(day), "%Y-%m-%d", &timeInfo);
+  strftime(session, sizeof(session), "%Y%m%d-%H%M%S", &timeInfo);
+  // Whatever was written before this point keeps the undated name and the
+  // boot- id. Splitting one boot across two sessions is worth it: the
+  // alternative is everything after it being undated too.
+  Serial.printf("MemoryStore: clock arrived; day %s -> %s, session %s -> %s\n",
+                _todayKey.c_str(), day, _sessionId.c_str(), session);
+  _todayKey = day;
+  _sessionId = session;
+  return true;
+}
+
 bool MemoryStore::begin(const Policy& policy) {
   _policy = policy;
 
@@ -1011,10 +1036,17 @@ String MemoryStore::privateMemoryPath() const {
 }
 
 String MemoryStore::nowIso() const {
-  struct tm timeInfo;
-  if (getLocalTime(&timeInfo, 10)) {
+  // UTC, and said so with the Z. These used to be local time with nothing to
+  // say which zone, so changing the timezone setting or crossing a DST
+  // boundary left old records that could not be compared against new ones.
+  // Filenames stay on local dates, because "today" has to mean the user's
+  // today and resolve to one file.
+  const time_t now = time(nullptr);
+  if (now > kClockSanityEpoch) {
+    struct tm utc;
+    gmtime_r(&now, &utc);
     char buf[32];
-    strftime(buf, sizeof(buf), "%Y-%m-%dT%H:%M:%S", &timeInfo);
+    strftime(buf, sizeof(buf), "%Y-%m-%dT%H:%M:%SZ", &utc);
     return String(buf);
   }
   return String("millis:") + String((uint32_t)millis());

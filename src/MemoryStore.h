@@ -20,6 +20,10 @@ class MemoryStore {
 
   bool begin();
   bool begin(const Policy& policy);
+  // Takes the date and session id from the clock if it arrived after begin().
+  // Returns true the one time it does. A boot that misses the sync would
+  // otherwise stay undated until the next reboot.
+  bool adoptClock();
   bool appendEvent(const char* role, const String& text, const char* type = "utterance");
   bool appendDialogue(const char* role, const String& text, const char* source = "live_transcription");
   bool appendFact(const String& fact, const char* source = "assistant", float confidence = 0.7f);

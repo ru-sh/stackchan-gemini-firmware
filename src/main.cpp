@@ -33,9 +33,16 @@ static constexpr uint32_t kBootNeutralSleepMs = 45000;
 // Well under the speaker buffer depth, so anything long enough to underrun is caught.
 static constexpr uint32_t kLoopStallReportMs = 250;
 static constexpr uint32_t kPowerButtonLedOffHoldMs = 700;
-// Short on purpose: a failed sync only costs dated filenames, so it must not
-// hold up the boot the user is watching.
-static constexpr uint32_t kNtpSyncTimeoutMs = 4000;
+// Long enough for a first SNTP exchange, which needs a DNS lookup and a UDP
+// round trip; 4s was not, and left the memory store undated. A boot that
+// still misses it is caught by the retry in loop() rather than by waiting
+// longer here, because the user is watching this.
+static constexpr uint32_t kNtpSyncTimeoutMs = 10000;
+// How often loop() looks for a clock that arrived after boot.
+static constexpr uint32_t kClockRetryIntervalMs = 60000;
+// How often to restart SNTP outright when it still has not landed, in case
+// the first attempt failed on a name that could not be resolved yet.
+static constexpr uint32_t kClockResyncIntervalMs = 300000;
 static uint32_t g_last_human_activity_ms = 0;
 static uint32_t g_power_button_pressed_ms = 0;
 static bool g_power_button_leds_off = false;
@@ -218,7 +225,27 @@ static bool syncClockFromNtp(const ConfigManager& cfg) {
     Serial.println("Clock: ntp disabled by config");
     return false;
   }
-  configTzTime(c.timezone.c_str(), c.ntpServer.c_str());
+
+  // Resolve first and say so. Without this a timeout cannot be told apart
+  // from a name that never resolved, and the two need different fixes.
+  IPAddress resolved;
+  if (WiFi.hostByName(c.ntpServer.c_str(), resolved)) {
+    Serial.printf("Clock: ntp host %s resolved to %s\n", c.ntpServer.c_str(),
+                  resolved.toString().c_str());
+  } else {
+    Serial.printf("Clock: ntp host %s did not resolve\n", c.ntpServer.c_str());
+  }
+
+  // sntp_setservername keeps the pointer it is given rather than copying, so
+  // the gateway string has to outlive this call.
+  static String gatewayNtp;
+  gatewayNtp = WiFi.gatewayIP().toString();
+  // Routers commonly serve NTP themselves, which is the way out of a network
+  // that blocks outbound port 123.
+  configTzTime(c.timezone.c_str(), c.ntpServer.c_str(), gatewayNtp.c_str());
+  Serial.printf("Clock: waiting up to %lu ms (servers: %s, gateway %s)\n",
+                static_cast<unsigned long>(kNtpSyncTimeoutMs), c.ntpServer.c_str(),
+                gatewayNtp.c_str());
 
   struct tm timeInfo;
   const uint32_t start = millis();
@@ -235,6 +262,39 @@ static bool syncClockFromNtp(const ConfigManager& cfg) {
   Serial.printf("Clock: ntp sync timed out after %lu ms; memory stays undated\n",
                 static_cast<unsigned long>(kNtpSyncTimeoutMs));
   return false;
+}
+
+// Picks up a clock that arrived after boot, so a missed sync costs this boot
+// its first few records rather than all of them. Cheap: a getLocalTime call
+// once a minute until it lands, then nothing.
+static void maintainClock(ConfigManager& cfg) {
+  static uint32_t last_check_ms = 0;
+  static uint32_t last_resync_ms = 0;
+  static bool clock_adopted = false;
+  if (clock_adopted) return;
+  if (!wifiManager.isConnected()) return;
+
+  const uint32_t now = millis();
+  if (last_check_ms && now - last_check_ms < kClockRetryIntervalMs) return;
+  last_check_ms = now;
+
+  if (memory.adoptClock()) {
+    clock_adopted = true;
+    return;
+  }
+  struct tm timeInfo;
+  if (getLocalTime(&timeInfo, 10)) {
+    // The clock is good and the store was already dated, so nothing to do
+    // beyond stopping the checks.
+    clock_adopted = true;
+    return;
+  }
+  if (!last_resync_ms) last_resync_ms = now;
+  if (now - last_resync_ms >= kClockResyncIntervalMs) {
+    last_resync_ms = now;
+    Serial.println("Clock: still unset; restarting ntp");
+    syncClockFromNtp(cfg);
+  }
 }
 
 static bool connectWifiFromConfig(ConfigManager& cfg) {
@@ -441,6 +501,7 @@ void loop() {
     wifiManager.requestRescan("carried to a new place");
   }
   wifiManager.loop(gemini_busy);
+  maintainClock(configManager);
   const uint32_t stall_t0 = millis();
   gemini.loop();
   const uint32_t stall_t1 = millis();

@@ -88,6 +88,49 @@ reports SSIDs only, never the passwords beside them.
 }
 ```
 
+## Spoken language
+
+`transcription_language_codes` is a comma separated list of BCP-47 hints
+telling speech recognition which languages to expect:
+
+```json
+{
+  "transcription_language_codes": "ru-RU,en-US"
+}
+```
+
+Leave it empty and the language is guessed from the audio alone. On a
+one-word reply there is very little to guess from, and a mis-identified
+language is transcribed as that language: a short Russian phrase has come back
+as Spanish, and the model then answers in Spanish, because that is faithfully
+what it was handed. These are hints rather than a restriction, so other
+languages still transcribe; pin the reply language in `prompts/system.txt` as
+well if it matters.
+
+## Clock
+
+Nothing else in the firmware sets the clock. Without it `getLocalTime` fails
+and the memory store names every file `undated` and every session
+`boot-<millis>`, and those ids collide because the value is the same few
+hundred milliseconds on every boot.
+
+```json
+{
+  "timezone": "UTC0",
+  "ntp_server": "pool.ntp.org"
+}
+```
+
+`timezone` is a POSIX TZ string, not an IANA name like `Asia/Yerevan`. POSIX
+counts west as positive, so the offset looks inverted: UTC+4 is written `-4`,
+giving `<+04>-4`. A zone with DST needs its rules spelled out, as in
+`CET-1CEST,M3.5.0,M10.5.0/3`. The Web UI derives the right string from the
+browser, which is easier than writing one by hand.
+
+Getting the timezone wrong only shifts when the memory files roll over to a
+new day; record timestamps are stored in UTC regardless. Setting `ntp_server`
+to an empty string disables the sync.
+
 After connecting, the robot re-checks roughly every two minutes and moves only
 when another configured network is stronger by at least `wifi_roam_margin_db`
 (default 8, clamped to 3-30). The margin is what stops two overlapping routers

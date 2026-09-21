@@ -17,5 +17,8 @@
   "vad_silence_duration_ms": 900,
   "vad_start_sensitivity_high": false,
   "vad_end_sensitivity_low": true,
-  "vad_turn_includes_all_input": false
+  "vad_turn_includes_all_input": false,
+  "transcription_language_codes": "en-US",
+  "timezone": "UTC0",
+  "ntp_server": "pool.ntp.org"
 }

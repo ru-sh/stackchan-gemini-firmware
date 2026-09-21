@@ -13,6 +13,7 @@
 #include "EmotionController.h"
 #include "ServoGestureController.h"
 #include "CameraCapture.h"
+#include "CarryDetector.h"
 #include "WifiManager.h"
 
 GeminiLiveProbe gemini;
@@ -25,6 +26,7 @@ GeminiToolBridge toolBridge(toolGateway, emotion, servoGestures, camera);
 WebConfigServer webConfig(SD, memory, toolGateway, emotion, servoGestures, gemini, camera);
 ConfigManager configManager(SD);
 WifiManager wifiManager;
+CarryDetector carryDetector;
 volatile bool g_voice_toggle_requested = false;
 static uint8_t g_speaker_volume = 200;
 static constexpr uint32_t kBootNeutralSleepMs = 45000;
@@ -264,6 +266,7 @@ void setup() {
   playBootDroidWhistle();
   emotion.begin();
   servoGestures.begin();
+  carryDetector.begin();
   camera.begin();
   M5StackChan.Motion.goHome();
   // Safe defaults before SD config is loaded. ConfigManager may override after SD mount.
@@ -387,8 +390,19 @@ void loop() {
   // has buffered, so time each subsystem and name the offender when it does.
   // Reported only above the threshold, so a healthy loop stays silent.
   // Roaming must not interrupt a conversation, so anything from connecting to
-  // speaking counts as busy and defers the scan.
-  wifiManager.loop(gemini.isReady() || gemini.isSpeaking() || gemini.isRecording());
+  // speaking counts as busy and defers the scan. continuousConversation() is
+  // what covers the connect phase: isReady() only turns true once setup has
+  // completed, which would leave the handshake itself unprotected.
+  const bool gemini_busy = gemini.continuousConversation() || gemini.isReady() ||
+                           gemini.isSpeaking() || gemini.isRecording();
+  // The robot is only carried while idle, so this is the one moment its Wi-Fi
+  // surroundings can change. Scanning as it is set down means the next wake
+  // finds the right network already chosen. Gestures are excluded so that
+  // centring the head on the way to sleep does not read as being carried.
+  if (!gemini_busy && !servoGestures.active() && carryDetector.poll()) {
+    wifiManager.requestRescan("carried to a new place");
+  }
+  wifiManager.loop(gemini_busy);
   const uint32_t stall_t0 = millis();
   gemini.loop();
   const uint32_t stall_t1 = millis();
@@ -433,11 +447,16 @@ void loop() {
       // if Gemini is already connected that call immediately starts the mic and
       // the speaker must stay out of the recording path.
       playWakeDroidChirp();
+      // Free when the link is up, which it normally is; when it is not, this
+      // rejoins the network the last scan picked instead of scanning again.
+      wifiManager.ensureLinkForSession();
       bool queued = gemini.requestConversationStart();
       if (queued) {
         // Keep user-facing listening cue honest: GeminiLiveProbe will switch to
         // "listening" only after the first mic chunk is actually sent.
-        emotion.setEmotion("thinking");
+        // Not "thinking": the robot has nothing to think about yet, and the
+        // user needs to see that talking now would go nowhere.
+        emotion.setEmotion("connecting");
         drawStatus(gemini.isReady() ? "dialog: preparing mic..." : "Gemini connecting...");
       } else {
         emotion.setEmotion("error");

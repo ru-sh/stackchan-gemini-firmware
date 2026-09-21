@@ -144,6 +144,10 @@ class GeminiLiveProbe {
   bool pending_text_turn_ = false;
   bool resume_conversation_after_text_ = false;
   bool mic_ready_for_speech_ = false;
+  // Whether this conversation has reached "listening" even once. Before it
+  // has, the robot shows the connecting spinner; after it has, a pause for the
+  // mic is just part of the back-and-forth and showing it would only flicker.
+  bool session_listened_ = false;
   bool end_session_requested_ = false;
   // Models with background reasoning keep working after turnComplete, so the
   // interaction status drives end-of-turn once the server has sent one.

@@ -72,6 +72,7 @@ void EmotionController::loop() {
 
   switch (mode_) {
     case Mode::Neutral:   renderNeutral(); break;
+    case Mode::Connecting: renderConnecting(); break;
     case Mode::Listening: renderListening(); break;
     case Mode::Speaking:  renderSpeaking(); break;
     case Mode::Thinking:  renderThinking(); break;
@@ -90,6 +91,7 @@ void EmotionController::loop() {
 
 EmotionController::Mode EmotionController::parseMode(const String& emotion, String& normalized) {
   String e = lowerTrimmed(emotion);
+  if (e == "connect" || e == "connecting") { normalized = "connecting"; return Mode::Connecting; }
   if (e == "listen" || e == "listening") { normalized = "listening"; return Mode::Listening; }
   if (e == "speak" || e == "speaking" || e == "talking") { normalized = "speaking"; return Mode::Speaking; }
   if (e == "think" || e == "thinking") { normalized = "thinking"; return Mode::Thinking; }
@@ -216,6 +218,17 @@ void EmotionController::renderFace() {
   uint8_t talkShape = 0;
 
   switch (mode_) {
+    case Mode::Connecting:
+      // Dim, half-shut eyes: awake, but not ready to be spoken to. The
+      // spinner below is what actually carries the "wait" message.
+      eyeColor = TFT_DARKCYAN;
+      accent = TFT_PURPLE;
+      pupilDx = 0;
+      pupilDy = 0;
+      mouthW = 28;
+      mouthH = 4;
+      mouthY = cy + 48;
+      break;
     case Mode::Listening:
       eyeColor = TFT_SKYBLUE;
       accent = TFT_BLUE;
@@ -350,6 +363,25 @@ void EmotionController::renderFace() {
     d.fillCircle(cx + mouthW / 2, mouthY, mouthH / 2, eyeColor);
   }
 
+  if (mode_ == Mode::Connecting) {
+    // Half-lowered lids over the eyes drawn above, so the face reads as not
+    // yet attentive rather than merely a different colour.
+    d.fillRect(lx - 30, ey - 30, 60, 22, TFT_BLACK);
+    d.fillRect(rx - 30, ey - 30, 60, 22, TFT_BLACK);
+    // A travelling dot ring is the one shape everyone already reads as
+    // "waiting", which beats any wording the robot could show instead.
+    const int dots = 8;
+    const int head = (frame_ / 2) % dots;
+    for (int i = 0; i < dots; ++i) {
+      const float a = (float)i * 2.0f * PI / dots - PI / 2.0f;
+      const int dx = cx + (int)(lroundf(cosf(a) * 46.0f));
+      const int dy = mouthY - 4 + (int)(lroundf(sinf(a) * 18.0f));
+      const int lead = (i - head + dots) % dots;
+      const uint16_t c = lead == 0 ? TFT_WHITE : (lead == 1 ? TFT_PURPLE : TFT_NAVY);
+      d.fillCircle(dx, dy, lead == 0 ? 5 : 4, c);
+    }
+  }
+
   if (mode_ == Mode::Sleep) {
     d.setTextSize(2);
     d.setTextColor(TFT_DARKCYAN);
@@ -363,6 +395,20 @@ void EmotionController::renderFace() {
 void EmotionController::renderNeutral() {
   uint8_t v = wave8(frame_ * 2, 4, 18);
   setAll(0, 0, v);
+}
+
+void EmotionController::renderConnecting() {
+  // A single dot running the ring, matching the on-screen spinner. Kept dim
+  // and violet so it cannot be confused with thinking's teal chase.
+  uint8_t head = (frame_ / 2) % kLedCount;
+  for (uint8_t i = 0; i < kLedCount; ++i) {
+    uint8_t dist = (i + kLedCount - head) % kLedCount;
+    uint8_t v = 1;
+    if (dist == 0) v = 70;
+    else if (dist == 1) v = 26;
+    else if (dist == 2) v = 8;
+    setLed(i, scale8(90, v), 0, v);
+  }
 }
 
 void EmotionController::renderListening() {

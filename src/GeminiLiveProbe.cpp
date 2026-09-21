@@ -75,6 +75,7 @@ void GeminiLiveProbe::disconnect(bool intentional, const char* finalEmotion) {
   pending_text_ = "";
   if (realtime_recording_) stopRealtimeRecord();
   mic_ready_for_speech_ = false;
+  session_listened_ = false;
   realtime_recording_ = false;
   speaking_ = false;
   continuous_conversation_ = false;
@@ -427,8 +428,10 @@ void GeminiLiveProbe::startRealtimeRecord() {
     interaction_pending_ms_ = 0;
     mic_ready_for_speech_ = false;
     // Do not show the user-facing listening cue until at least one mic chunk
-    // has been successfully captured and sent to Gemini.
-    if (emotion_) emotion_->setEmotion("thinking");
+    // has been successfully captured and sent to Gemini. Until the first one
+    // lands the robot is still starting up, which the user needs to be able to
+    // tell apart from Gemini working on an answer.
+    if (emotion_) emotion_->setEmotion(session_listened_ ? "thinking" : "connecting");
     // Keep the realtime listening transition silent. This path runs after every
     // response in continuous dialog, so any sound here is too frequent and delays
     // microphone availability.
@@ -468,6 +471,7 @@ void GeminiLiveProbe::toggleRealtimeRecord() {
 
 bool GeminiLiveProbe::requestConversationStart() {
   continuous_conversation_ = true;
+  session_listened_ = false;
   pending_start_recording_ = true;
   last_activity_ms_ = millis();
   if (!isReady()) {
@@ -546,6 +550,7 @@ void GeminiLiveProbe::recordAndSendAudioChunk() {
     ++mic_chunks_sent_;
     if (!mic_ready_for_speech_) {
       mic_ready_for_speech_ = true;
+      session_listened_ = true;
       Serial.println("GeminiLive: mic ready for speech");
       if (emotion_ && realtime_recording_ && !speaking_) emotion_->setEmotion("listening");
     }

@@ -14,6 +14,10 @@ class EmotionController {
  private:
   enum class Mode {
     Neutral,
+    // Woken, but the Gemini session is not up yet, so speaking now would be
+    // missed. Deliberately distinct from Thinking, which means Gemini has the
+    // question and is working on it.
+    Connecting,
     Listening,
     Speaking,
     Thinking,
@@ -48,6 +52,7 @@ class EmotionController {
   void drawLabel();
   void renderFace();
   void renderNeutral();
+  void renderConnecting();
   void renderListening();
   void renderSpeaking();
   void renderThinking();

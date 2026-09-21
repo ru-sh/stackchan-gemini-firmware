@@ -70,6 +70,11 @@ class GeminiLiveProbe {
   void setModel(const String& model) { if (model.length()) model_ = model; }
   void setVoiceName(const String& voiceName) { if (voiceName.length()) voice_name_ = voiceName; }
   void setSearchGrounding(bool enabled) { search_grounding_ = enabled; }
+  // Comma separated BCP-47 codes, e.g. "ru-RU,en-US". Empty means no hint.
+  void setTranscriptionLanguageCodes(const String& codes) {
+    transcription_language_codes_ = codes;
+    transcription_language_codes_.trim();
+  }
   bool searchGrounding() const { return search_grounding_; }
   void setSystemPrompt(const String& systemPrompt) { system_prompt_ = systemPrompt; system_prompt_.trim(); }
   void setPersonaPrompt(const String& personaPrompt) { persona_prompt_ = personaPrompt; persona_prompt_.trim(); }
@@ -144,6 +149,10 @@ class GeminiLiveProbe {
   bool pending_text_turn_ = false;
   bool resume_conversation_after_text_ = false;
   bool mic_ready_for_speech_ = false;
+  // Whether this conversation has reached "listening" even once. Before it
+  // has, the robot shows the connecting spinner; after it has, a pause for the
+  // mic is just part of the back-and-forth and showing it would only flicker.
+  bool session_listened_ = false;
   bool end_session_requested_ = false;
   // Models with background reasoning keep working after turnComplete, so the
   // interaction status drives end-of-turn once the server has sent one.
@@ -190,6 +199,7 @@ class GeminiLiveProbe {
   bool vad_end_sensitivity_low_ = true;
   bool vad_turn_includes_all_input_ = false;
   bool search_grounding_ = true;
+  String transcription_language_codes_;
   // Search runs server-side, so these only record what the metadata reported.
   bool grounding_used_this_turn_ = false;
   uint32_t grounding_turns_ = 0;

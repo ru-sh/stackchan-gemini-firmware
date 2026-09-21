@@ -40,6 +40,18 @@ class ConfigManager {
     bool vadStartSensitivityHigh = false;
     bool vadEndSensitivityLow = true;
     bool vadTurnIncludesAllInput = false;
+    // BCP-47 hints for input speech recognition, comma separated, e.g.
+    // "ru-RU,en-US". Empty leaves the language to be guessed from the audio,
+    // which on short utterances is how a Russian phrase can come back
+    // transcribed as Spanish, taking the spoken reply with it.
+    String transcriptionLanguageCodes;
+    // POSIX TZ string, e.g. "MSK-3" or "CET-1CEST,M3.5.0,M10.5.0/3". Used to
+    // date the memory files, so getting it wrong only shifts when a day rolls
+    // over. Default keeps the clock honest rather than guessing a location.
+    String timezone = "UTC0";
+    // Empty disables the time sync, and the memory store falls back to
+    // undated files.
+    String ntpServer = "pool.ntp.org";
     String systemPrompt;
     String personaPrompt;
   };

@@ -75,6 +75,7 @@ void GeminiLiveProbe::disconnect(bool intentional, const char* finalEmotion) {
   pending_text_ = "";
   if (realtime_recording_) stopRealtimeRecord();
   mic_ready_for_speech_ = false;
+  session_listened_ = false;
   realtime_recording_ = false;
   speaking_ = false;
   continuous_conversation_ = false;
@@ -160,7 +161,24 @@ void GeminiLiveProbe::sendSetup() {
   // Ask Live API to stream text transcriptions for both sides of the audio
   // conversation. These transcript chunks are logged as recent dialogues and
   // are not used for durable memory until a later batched summarizer stage.
-  setup["inputAudioTranscription"].to<JsonObject>();
+  auto inputTranscription = setup["inputAudioTranscription"].to<JsonObject>();
+  // Without a hint the recogniser picks the language from the audio alone,
+  // and a one-word reply gives it almost nothing to go on: short Russian
+  // utterances have come back as Spanish, and the model then answers in
+  // Spanish because that is faithfully what it was handed. These are hints,
+  // not a restriction, so other languages still transcribe.
+  if (transcription_language_codes_.length()) {
+    auto codes = inputTranscription["languageCodes"].to<JsonArray>();
+    int start = 0;
+    while (start < transcription_language_codes_.length()) {
+      int comma = transcription_language_codes_.indexOf(',', start);
+      if (comma < 0) comma = transcription_language_codes_.length();
+      String code = transcription_language_codes_.substring(start, comma);
+      code.trim();
+      if (code.length()) codes.add(code);
+      start = comma + 1;
+    }
+  }
   setup["outputAudioTranscription"].to<JsonObject>();
   auto realtimeInputConfig = setup["realtimeInputConfig"].to<JsonObject>();
   auto automaticActivityDetection = realtimeInputConfig["automaticActivityDetection"].to<JsonObject>();
@@ -173,6 +191,9 @@ void GeminiLiveProbe::sendSetup() {
   automaticActivityDetection["silenceDurationMs"] = vad_silence_duration_ms_;
   realtimeInputConfig["turnCoverage"] =
       vad_turn_includes_all_input_ ? "TURN_INCLUDES_ALL_INPUT" : "TURN_INCLUDES_ONLY_ACTIVITY";
+  Serial.printf("GeminiLive: setup transcription_languages=%s\n",
+                transcription_language_codes_.length() ? transcription_language_codes_.c_str()
+                                                       : "(none, auto-detect)");
   Serial.printf("GeminiLive: setup model=%s voice=%s search=%s vad_prefix=%u vad_silence=%u\n",
                 model_.c_str(), voice_name_.c_str(), search_grounding_ ? "on" : "off",
                 static_cast<unsigned>(vad_prefix_padding_ms_),
@@ -427,8 +448,10 @@ void GeminiLiveProbe::startRealtimeRecord() {
     interaction_pending_ms_ = 0;
     mic_ready_for_speech_ = false;
     // Do not show the user-facing listening cue until at least one mic chunk
-    // has been successfully captured and sent to Gemini.
-    if (emotion_) emotion_->setEmotion("thinking");
+    // has been successfully captured and sent to Gemini. Until the first one
+    // lands the robot is still starting up, which the user needs to be able to
+    // tell apart from Gemini working on an answer.
+    if (emotion_) emotion_->setEmotion(session_listened_ ? "thinking" : "connecting");
     // Keep the realtime listening transition silent. This path runs after every
     // response in continuous dialog, so any sound here is too frequent and delays
     // microphone availability.
@@ -468,6 +491,7 @@ void GeminiLiveProbe::toggleRealtimeRecord() {
 
 bool GeminiLiveProbe::requestConversationStart() {
   continuous_conversation_ = true;
+  session_listened_ = false;
   pending_start_recording_ = true;
   last_activity_ms_ = millis();
   if (!isReady()) {
@@ -546,6 +570,7 @@ void GeminiLiveProbe::recordAndSendAudioChunk() {
     ++mic_chunks_sent_;
     if (!mic_ready_for_speech_) {
       mic_ready_for_speech_ = true;
+      session_listened_ = true;
       Serial.println("GeminiLive: mic ready for speech");
       if (emotion_ && realtime_recording_ && !speaking_) emotion_->setEmotion("listening");
     }

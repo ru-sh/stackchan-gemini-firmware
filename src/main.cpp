@@ -13,6 +13,7 @@
 #include "EmotionController.h"
 #include "ServoGestureController.h"
 #include "CameraCapture.h"
+#include "CarryDetector.h"
 #include "WifiManager.h"
 
 GeminiLiveProbe gemini;
@@ -25,12 +26,16 @@ GeminiToolBridge toolBridge(toolGateway, emotion, servoGestures, camera);
 WebConfigServer webConfig(SD, memory, toolGateway, emotion, servoGestures, gemini, camera);
 ConfigManager configManager(SD);
 WifiManager wifiManager;
+CarryDetector carryDetector;
 volatile bool g_voice_toggle_requested = false;
 static uint8_t g_speaker_volume = 200;
 static constexpr uint32_t kBootNeutralSleepMs = 45000;
 // Well under the speaker buffer depth, so anything long enough to underrun is caught.
 static constexpr uint32_t kLoopStallReportMs = 250;
 static constexpr uint32_t kPowerButtonLedOffHoldMs = 700;
+// Short on purpose: a failed sync only costs dated filenames, so it must not
+// hold up the boot the user is watching.
+static constexpr uint32_t kNtpSyncTimeoutMs = 4000;
 static uint32_t g_last_human_activity_ms = 0;
 static uint32_t g_power_button_pressed_ms = 0;
 static bool g_power_button_leds_off = false;
@@ -203,6 +208,35 @@ static void blackoutExternalLightsForPowerOff() {
   M5StackChan.showRgbColor(0, 0, 0);
 }
 
+// Sets the system clock, which nothing else in the firmware does. Until it
+// runs, getLocalTime() fails and MemoryStore names every file "undated" and
+// every session "boot-<millis>" — and those ids collide, because millis() at
+// that point in startup is the same few hundred milliseconds on every boot.
+static bool syncClockFromNtp(const ConfigManager& cfg) {
+  const auto& c = cfg.config();
+  if (!c.ntpServer.length()) {
+    Serial.println("Clock: ntp disabled by config");
+    return false;
+  }
+  configTzTime(c.timezone.c_str(), c.ntpServer.c_str());
+
+  struct tm timeInfo;
+  const uint32_t start = millis();
+  while (millis() - start < kNtpSyncTimeoutMs) {
+    if (getLocalTime(&timeInfo, 100)) {
+      char stamp[32];
+      strftime(stamp, sizeof(stamp), "%Y-%m-%d %H:%M:%S", &timeInfo);
+      Serial.printf("Clock: synced %s tz=%s\n", stamp, c.timezone.c_str());
+      return true;
+    }
+    M5StackChan.update();
+  }
+  // Not fatal: the memory store still works, it just cannot date anything.
+  Serial.printf("Clock: ntp sync timed out after %lu ms; memory stays undated\n",
+                static_cast<unsigned long>(kNtpSyncTimeoutMs));
+  return false;
+}
+
 static bool connectWifiFromConfig(ConfigManager& cfg) {
   // Network choice, reconnect and roaming now live in WifiManager. This stays
   // as the single boot-time entry point the setup flow already expects.
@@ -264,6 +298,7 @@ void setup() {
   playBootDroidWhistle();
   emotion.begin();
   servoGestures.begin();
+  carryDetector.begin();
   camera.begin();
   M5StackChan.Motion.goHome();
   // Safe defaults before SD config is loaded. ConfigManager may override after SD mount.
@@ -289,19 +324,6 @@ void setup() {
   bool sd_ok = SD.begin(GPIO_NUM_4, SPI, 25000000);
   Serial.printf("SD status: %s\n", sd_ok ? "ok" : "missing");
   if (sd_ok) {
-    MemoryStore::Policy policy;
-    policy.keepRawSessions = 3;
-    policy.keepRawDays = 3;
-    policy.maxEventFileBytes = 256 * 1024;
-    policy.maxRetrievedChars = 3000;
-    bool memory_ok = memory.begin(policy);
-    Serial.printf("MemoryStore status: %s session=%s day=%s\n",
-                  memory_ok ? "ok" : "failed",
-                  memory.currentSessionId(),
-                  memory.todayKey());
-    if (memory_ok) {
-      memory.compactIfNeeded();
-    }
     bool cfg_ok = configManager.begin();
     bool runtime_config_exists = SD.exists("/app/StackChan/config/runtime.json");
     Serial.printf("ConfigManager init: %s\n", cfg_ok ? "ok" : "failed");
@@ -316,6 +338,24 @@ void setup() {
                   static_cast<unsigned>(configManager.config().micNoiseFilterLevel));
     toolGateway.begin(configManager.gatewayConfig());
     bool wifi_ok = connectWifiFromConfig(configManager);
+    // Before MemoryStore, not after: it reads the clock once at begin() to
+    // name this session and today's files, so a clock that arrives later
+    // would leave this whole boot filed as undated.
+    if (wifi_ok) syncClockFromNtp(configManager);
+
+    MemoryStore::Policy policy;
+    policy.keepRawSessions = 3;
+    policy.keepRawDays = 3;
+    policy.maxEventFileBytes = 256 * 1024;
+    policy.maxRetrievedChars = 3000;
+    bool memory_ok = memory.begin(policy);
+    Serial.printf("MemoryStore status: %s session=%s day=%s\n",
+                  memory_ok ? "ok" : "failed",
+                  memory.currentSessionId(),
+                  memory.todayKey());
+    if (memory_ok) {
+      memory.compactIfNeeded();
+    }
     bool setup_ap_ok = false;
     if (!wifi_ok && shouldStartSetupAccessPoint(configManager, runtime_config_exists)) {
       setup_ap_ok = startSetupAccessPoint(configManager);
@@ -337,6 +377,7 @@ void setup() {
           gemini.setModel(cfg.geminiModel);
           gemini.setVoiceName(cfg.geminiVoice);
           gemini.setSearchGrounding(cfg.geminiSearchGrounding);
+          gemini.setTranscriptionLanguageCodes(cfg.transcriptionLanguageCodes);
           gemini.setVadConfig(cfg.vadPrefixPaddingMs, cfg.vadSilenceDurationMs,
                               cfg.vadStartSensitivityHigh, cfg.vadEndSensitivityLow,
                               cfg.vadTurnIncludesAllInput);
@@ -387,8 +428,19 @@ void loop() {
   // has buffered, so time each subsystem and name the offender when it does.
   // Reported only above the threshold, so a healthy loop stays silent.
   // Roaming must not interrupt a conversation, so anything from connecting to
-  // speaking counts as busy and defers the scan.
-  wifiManager.loop(gemini.isReady() || gemini.isSpeaking() || gemini.isRecording());
+  // speaking counts as busy and defers the scan. continuousConversation() is
+  // what covers the connect phase: isReady() only turns true once setup has
+  // completed, which would leave the handshake itself unprotected.
+  const bool gemini_busy = gemini.continuousConversation() || gemini.isReady() ||
+                           gemini.isSpeaking() || gemini.isRecording();
+  // The robot is only carried while idle, so this is the one moment its Wi-Fi
+  // surroundings can change. Scanning as it is set down means the next wake
+  // finds the right network already chosen. Gestures are excluded so that
+  // centring the head on the way to sleep does not read as being carried.
+  if (!gemini_busy && !servoGestures.active() && carryDetector.poll()) {
+    wifiManager.requestRescan("carried to a new place");
+  }
+  wifiManager.loop(gemini_busy);
   const uint32_t stall_t0 = millis();
   gemini.loop();
   const uint32_t stall_t1 = millis();
@@ -433,11 +485,16 @@ void loop() {
       // if Gemini is already connected that call immediately starts the mic and
       // the speaker must stay out of the recording path.
       playWakeDroidChirp();
+      // Free when the link is up, which it normally is; when it is not, this
+      // rejoins the network the last scan picked instead of scanning again.
+      wifiManager.ensureLinkForSession();
       bool queued = gemini.requestConversationStart();
       if (queued) {
         // Keep user-facing listening cue honest: GeminiLiveProbe will switch to
         // "listening" only after the first mic chunk is actually sent.
-        emotion.setEmotion("thinking");
+        // Not "thinking": the robot has nothing to think about yet, and the
+        // user needs to see that talking now would go nowhere.
+        emotion.setEmotion("connecting");
         drawStatus(gemini.isReady() ? "dialog: preparing mic..." : "Gemini connecting...");
       } else {
         emotion.setEmotion("error");

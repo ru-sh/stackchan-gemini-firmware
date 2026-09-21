@@ -61,6 +61,10 @@ bool ConfigManager::loadJsonConfig(const char* path) {
   config_.geminiVoice =
       GeminiLiveProbe::supportedVoice(doc["gemini_voice"] | config_.geminiVoice);
   config_.geminiSearchGrounding = doc["gemini_search_grounding"] | config_.geminiSearchGrounding;
+  config_.transcriptionLanguageCodes =
+      doc["transcription_language_codes"] | config_.transcriptionLanguageCodes;
+  config_.timezone = doc["timezone"] | config_.timezone;
+  config_.ntpServer = doc["ntp_server"] | config_.ntpServer;
   config_.gatewayBaseUrl = doc["gateway_base_url"] | config_.gatewayBaseUrl;
   config_.wifiSsid = doc["wifi_ssid"] | config_.wifiSsid;
   int roamMargin = doc["wifi_roam_margin_db"] | config_.wifiRoamMarginDb;
@@ -230,6 +234,9 @@ String ConfigManager::redactedStatusJson() const {
   doc["vad_start_sensitivity_high"] = config_.vadStartSensitivityHigh;
   doc["vad_end_sensitivity_low"] = config_.vadEndSensitivityLow;
   doc["vad_turn_includes_all_input"] = config_.vadTurnIncludesAllInput;
+  doc["transcription_language_codes"] = config_.transcriptionLanguageCodes;
+  doc["timezone"] = config_.timezone;
+  doc["ntp_server"] = config_.ntpServer;
   doc["system_prompt"] = config_.systemPrompt.length() ? "set" : "missing";
   doc["persona_prompt"] = config_.personaPrompt.length() ? "set" : "missing";
   String out;

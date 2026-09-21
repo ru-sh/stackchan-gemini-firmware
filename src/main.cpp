@@ -33,6 +33,9 @@ static constexpr uint32_t kBootNeutralSleepMs = 45000;
 // Well under the speaker buffer depth, so anything long enough to underrun is caught.
 static constexpr uint32_t kLoopStallReportMs = 250;
 static constexpr uint32_t kPowerButtonLedOffHoldMs = 700;
+// Short on purpose: a failed sync only costs dated filenames, so it must not
+// hold up the boot the user is watching.
+static constexpr uint32_t kNtpSyncTimeoutMs = 4000;
 static uint32_t g_last_human_activity_ms = 0;
 static uint32_t g_power_button_pressed_ms = 0;
 static bool g_power_button_leds_off = false;
@@ -205,6 +208,35 @@ static void blackoutExternalLightsForPowerOff() {
   M5StackChan.showRgbColor(0, 0, 0);
 }
 
+// Sets the system clock, which nothing else in the firmware does. Until it
+// runs, getLocalTime() fails and MemoryStore names every file "undated" and
+// every session "boot-<millis>" — and those ids collide, because millis() at
+// that point in startup is the same few hundred milliseconds on every boot.
+static bool syncClockFromNtp(const ConfigManager& cfg) {
+  const auto& c = cfg.config();
+  if (!c.ntpServer.length()) {
+    Serial.println("Clock: ntp disabled by config");
+    return false;
+  }
+  configTzTime(c.timezone.c_str(), c.ntpServer.c_str());
+
+  struct tm timeInfo;
+  const uint32_t start = millis();
+  while (millis() - start < kNtpSyncTimeoutMs) {
+    if (getLocalTime(&timeInfo, 100)) {
+      char stamp[32];
+      strftime(stamp, sizeof(stamp), "%Y-%m-%d %H:%M:%S", &timeInfo);
+      Serial.printf("Clock: synced %s tz=%s\n", stamp, c.timezone.c_str());
+      return true;
+    }
+    M5StackChan.update();
+  }
+  // Not fatal: the memory store still works, it just cannot date anything.
+  Serial.printf("Clock: ntp sync timed out after %lu ms; memory stays undated\n",
+                static_cast<unsigned long>(kNtpSyncTimeoutMs));
+  return false;
+}
+
 static bool connectWifiFromConfig(ConfigManager& cfg) {
   // Network choice, reconnect and roaming now live in WifiManager. This stays
   // as the single boot-time entry point the setup flow already expects.
@@ -292,19 +324,6 @@ void setup() {
   bool sd_ok = SD.begin(GPIO_NUM_4, SPI, 25000000);
   Serial.printf("SD status: %s\n", sd_ok ? "ok" : "missing");
   if (sd_ok) {
-    MemoryStore::Policy policy;
-    policy.keepRawSessions = 3;
-    policy.keepRawDays = 3;
-    policy.maxEventFileBytes = 256 * 1024;
-    policy.maxRetrievedChars = 3000;
-    bool memory_ok = memory.begin(policy);
-    Serial.printf("MemoryStore status: %s session=%s day=%s\n",
-                  memory_ok ? "ok" : "failed",
-                  memory.currentSessionId(),
-                  memory.todayKey());
-    if (memory_ok) {
-      memory.compactIfNeeded();
-    }
     bool cfg_ok = configManager.begin();
     bool runtime_config_exists = SD.exists("/app/StackChan/config/runtime.json");
     Serial.printf("ConfigManager init: %s\n", cfg_ok ? "ok" : "failed");
@@ -319,6 +338,24 @@ void setup() {
                   static_cast<unsigned>(configManager.config().micNoiseFilterLevel));
     toolGateway.begin(configManager.gatewayConfig());
     bool wifi_ok = connectWifiFromConfig(configManager);
+    // Before MemoryStore, not after: it reads the clock once at begin() to
+    // name this session and today's files, so a clock that arrives later
+    // would leave this whole boot filed as undated.
+    if (wifi_ok) syncClockFromNtp(configManager);
+
+    MemoryStore::Policy policy;
+    policy.keepRawSessions = 3;
+    policy.keepRawDays = 3;
+    policy.maxEventFileBytes = 256 * 1024;
+    policy.maxRetrievedChars = 3000;
+    bool memory_ok = memory.begin(policy);
+    Serial.printf("MemoryStore status: %s session=%s day=%s\n",
+                  memory_ok ? "ok" : "failed",
+                  memory.currentSessionId(),
+                  memory.todayKey());
+    if (memory_ok) {
+      memory.compactIfNeeded();
+    }
     bool setup_ap_ok = false;
     if (!wifi_ok && shouldStartSetupAccessPoint(configManager, runtime_config_exists)) {
       setup_ap_ok = startSetupAccessPoint(configManager);

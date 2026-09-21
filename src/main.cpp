@@ -340,6 +340,7 @@ void setup() {
           gemini.setModel(cfg.geminiModel);
           gemini.setVoiceName(cfg.geminiVoice);
           gemini.setSearchGrounding(cfg.geminiSearchGrounding);
+          gemini.setTranscriptionLanguageCodes(cfg.transcriptionLanguageCodes);
           gemini.setVadConfig(cfg.vadPrefixPaddingMs, cfg.vadSilenceDurationMs,
                               cfg.vadStartSensitivityHigh, cfg.vadEndSensitivityLow,
                               cfg.vadTurnIncludesAllInput);

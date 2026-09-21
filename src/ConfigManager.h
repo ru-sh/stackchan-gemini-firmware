@@ -40,6 +40,11 @@ class ConfigManager {
     bool vadStartSensitivityHigh = false;
     bool vadEndSensitivityLow = true;
     bool vadTurnIncludesAllInput = false;
+    // BCP-47 hints for input speech recognition, comma separated, e.g.
+    // "ru-RU,en-US". Empty leaves the language to be guessed from the audio,
+    // which on short utterances is how a Russian phrase can come back
+    // transcribed as Spanish, taking the spoken reply with it.
+    String transcriptionLanguageCodes;
     String systemPrompt;
     String personaPrompt;
   };
